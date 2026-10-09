@@ -4,15 +4,98 @@
     "id": "cotabby",
     "name": "cotabby",
     "accent": "#80647d",
-    "hubHref": "../../Changelogs/index.html"
+    "hubHref": "../../Changelogs/index.html",
+    "version": "1.0.0 (1)"
   },
-  "generatedAt": "2026-10-09T03:09:59.707829-04:00",
+  "generatedAt": "2026-10-09T12:37:52.015496-04:00",
   "days": [
     {
       "date": "2026-10-09",
       "sessions": [
         {
           "entries": [
+            {
+              "key": "fork-release",
+              "title": "The fork has its own notarized download",
+              "summary": "An Apple-verified ZIP now contains Cotabby Fork, which installs beside the original app and keeps separate settings.",
+              "category": "new",
+              "why": "You can try the fork without replacing the Cotabby installation you already have.",
+              "details": [
+                "The distribution app still needs its own interactive onboarding and Tab-acceptance check. Wider host testing is deferred to avoid taking over the desktop."
+              ],
+              "technical": {
+                "notes": "Universal Release 1.0.0 (1). Xcode submission and notarized export succeeded; a fresh ZIP extraction passed ticket, deep signature and Gatekeeper checks. Dev startup and both required permission grants were confirmed from state-only logs."
+              },
+              "points": [
+                "Manual release links replace inactive update buttons in fork builds.",
+                "The existing Cotabby Dev app now runs the latest fixes with its permission grants intact."
+              ],
+              "noPicture": "Desktop captures are deferred to respect the request for no foreground interruptions.",
+              "source": "cli",
+              "createdAt": "2026-10-09T16:37:52.014509+00:00",
+              "updatedAt": "2026-10-09T16:37:52.014514+00:00",
+              "update": "2026-10-09-2",
+              "headline": "Familiar phrases, more room for context"
+            }
+          ],
+          "build": {
+            "built": true,
+            "version": "1.0.0 (1)"
+          },
+          "evidence": {
+            "built": {
+              "how": "cli",
+              "source": "cli",
+              "recordedAt": "2026-10-09T16:37:52.015410+00:00"
+            },
+            "version": {
+              "how": "cli",
+              "source": "cli",
+              "recordedAt": "2026-10-09T16:37:52.015422+00:00"
+            }
+          }
+        },
+        {
+          "entries": [
+            {
+              "key": "combined-apple-context",
+              "title": "Large writing contexts fit Apple Intelligence",
+              "summary": "Cotabby now budgets the whole request before generating. Oversized multilingual notes that previously exceeded Apple Intelligence limits can produce suggestions while keeping nearby text.",
+              "category": "fixed",
+              "why": "Long notes, clipboard references, and writing history can stay useful without causing a context-limit failure.",
+              "technical": {
+                "notes": "Six live stress scenarios passed: five raw inputs overflowed the actual 8192-token window, bounded input fit, all four reference facts were recalled, and duplicate suffix text stayed suppressed. The unchanged 52-case Release suite passed. Awkward mid-line wording remains a known limitation."
+              },
+              "points": [
+                "Keeps room for the suggestion itself and preserves text nearest the cursor.",
+                "Avoids extra token-counting work for ordinary short requests."
+              ],
+              "highlight": true,
+              "noPicture": "Desktop captures are deferred to respect the request for no foreground interruptions.",
+              "source": "cli",
+              "createdAt": "2026-10-09T16:28:16.507252+00:00",
+              "updatedAt": "2026-10-09T16:28:16.507259+00:00",
+              "update": "2026-10-09-2",
+              "headline": "Familiar phrases, more room for context"
+            },
+            {
+              "key": "history-capitalization",
+              "title": "Familiar phrases keep their names and capitals",
+              "summary": "Remembered phrases now retain the spelling used in that phrase, even when the same word appears lowercase elsewhere.",
+              "category": "fixed",
+              "why": "Names and acronyms no longer need recasing after accepting a familiar phrase.",
+              "technical": {
+                "notes": "Context-specific spelling regression tests pass. An optimized 1.63 million-token construction benchmark measured 37.28 MiB before versus 37.33 MiB after across three runs each; these are whole-process peaks, not exact retained heap."
+              },
+              "highlight": true,
+              "noPicture": "Desktop captures are deferred to respect the request for no foreground interruptions.",
+              "source": "cli",
+              "createdAt": "2026-10-09T16:26:20.596609+00:00",
+              "updatedAt": "2026-10-09T16:26:20.596616+00:00",
+              "update": "2026-10-09-2",
+              "headline": "Familiar phrases, more room for context",
+              "intro": "This follow-up protects the words you meant and makes large writing contexts safer to use. A separate fork installer is being prepared alongside the existing app."
+            },
             {
               "key": "personal-vocabulary",
               "title": "Cotabby remembers the words you choose",
@@ -112,26 +195,19 @@
     {
       "key": "live-app-verification",
       "kind": "todo",
-      "title": "Expand testing to more writing apps",
-      "summary": "Real global-key completion and Tab acceptance pass in TextEdit, including the saved-word fix. Chromium, Codex, Slack, Element, and Ferdium still need the wider focus and insertion matrix; the three messaging apps are not installed here.",
+      "title": "Finish the fork and wider writing-app checks",
+      "summary": "The notarized distribution app needs its own first-run and Tab-acceptance check. TextEdit acceptance was verified with Cotabby Dev; Brave and the wider host matrix remain deferred to avoid foreground interruptions.",
       "addedAt": "2026-10-09T06:29:11.953923+00:00"
     },
     {
-      "key": "history-capitalization",
+      "key": "apple-midline-wording",
       "kind": "bug",
-      "title": "Preserve capitalization in familiar phrases",
-      "summary": "The existing history predictor can change a familiar phrase after the same word is typed with different capitalization elsewhere. It needs phrase-specific spelling storage.",
-      "addedAt": "2026-10-09T06:35:38.219130+00:00"
-    },
-    {
-      "key": "combined-apple-context",
-      "kind": "bug",
-      "title": "Keep large context requests within Apple Intelligence limits",
-      "summary": "The existing Apple engine limits context sources individually but lacks a combined budget. Large multilingual notes and surrounding text can still exceed its request limit.",
-      "addedAt": "2026-10-09T06:35:47.215096+00:00"
+      "title": "Improve wording before existing text",
+      "summary": "One oversized Apple Intelligence test produced awkward wording before the text already after the cursor. Context fitting and duplicate-text protection passed; fluent mid-sentence wording still needs improvement.",
+      "addedAt": "2026-10-09T16:28:47.886294+00:00"
     }
   ],
   "_engine": {
-    "renderSha256": "47055d58da124e66ce18b4150ca685aa5291d746e79afa7c1da815071b7f0846"
+    "renderSha256": "d652a7d49975093898b6b8e35c63e556ce55192f796cc5eeb181017cc2a5cd09"
   }
 }

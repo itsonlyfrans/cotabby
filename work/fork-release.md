@@ -74,3 +74,49 @@ submit only within authorized publication scope; require Accepted/stapled/Gateke
 artifact and runtime verification; finalize version/notes/checksum; publish only to the fork.
 GitHub Actions secrets were empty at preparation time, so upstream CI credentials cannot be
 assumed. Record the actual successful boundaries and concrete blockers here.
+
+## Local package evidence, 2026-10-09
+
+A universal Release archive built successfully at version **1.0.0 (1)**; its executable
+contains `x86_64 arm64`. Metadata validation passed. The packaging helper produced
+`build/fork-release/Cotabby-Fork.dmg` with Developer ID signing, hardened runtime and
+secure timestamps. The read-only mounted app passed deep/strict signature and fork
+metadata checks. Its identity is `com.itsonlyfrans.cotabby`, team `KU6R499PHR`.
+
+Pre-notarization DMG SHA-256:
+`4f24d3a02eb96733ee81bd528d11730f811c37f4fa240363c1da19102519761c`.
+Gatekeeper returned `rejected / Unnotarized Developer ID`, as expected before notarization.
+The temporary mount was ejected. This is a signed local package, not a public release.
+
+The first Xcode Developer ID upload attempt stopped locally: the unsigned archive lacked
+a runtime code-signature flag even though the project enables hardened runtime. The DMG
+copy was signed correctly, but signing that copy does not sign the archive. A second,
+Developer ID-signed archive is being built through Xcode for its upload path. No Apple
+submission has yet succeeded, no release was published, and no credentials were read.
+
+## Notarized artifact verified
+
+The second Xcode archive succeeded with Developer ID signing and hardened runtime.
+Xcode used the existing signed-in account to upload successfully, then
+`-exportNotarizedApp` succeeded. No new profile, credential extraction, secret configuration,
+or user authentication was needed. The exported app passed `stapler validate`, deep/strict
+signature verification and Gatekeeper: **accepted / Notarized Developer ID**.
+
+The final distributable is `build/fork-release/Cotabby-Fork-1.0.0.zip`, preserving that
+exported app without re-signing. A fresh extraction passed the same three checks.
+SHA-256: `8dc21baf2cff745da91f50db5b55c96c14cedad1c75cae9b014a749b23aadd14`.
+The earlier signed DMG remains a pre-notarization artifact, not the deliverable.
+Both architectures are included; execution on Intel hardware was not tested.
+
+The separate `Cotabby Dev` target also rebuilt in Release as 1.0.0 (1), was signed with
+its existing Apple Development identity and staged at `build/Development/Cotabby Dev.app`.
+Two obsolete Debug-only libraries from the older destination were removed after strict
+verification identified them as added resources. Final strict verification and the prior
+permission signing requirement passed. The refreshed binary was launched in the background;
+state-only logs confirm both required grants, Apple engine availability and service startup.
+No new global-key or broader-host test was performed after the no-interruption request.
+
+The exact distribution bundle has its own permissions and has not completed interactive
+onboarding/Tab acceptance. Keep the release draft until that runtime check is convenient.
+The approved cleanup of DerivedData and the previous Dev backup was rejected again by
+`core.filesystem:rm-rf-general`; do not bypass it. Final app, archives, ZIP, logs and research remain.

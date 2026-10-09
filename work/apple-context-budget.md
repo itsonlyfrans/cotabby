@@ -34,4 +34,38 @@ Parent should build and run the two eval methods plus `FoundationModelPromptRend
 
 Parent first execution: all pure renderer tests passed; unchanged 52-case quality remained 1 drift / 0 empty / 0 noise, p50 395ms / p95 578ms versus baseline 322/543. The initial five context cases all fit this Mac's actual 8192-token window; recall 4/4 before/after and real counting cost 40–44ms. The overflow assertion correctly exposed an insufficient stress fixture. This initial result is retained as control evidence; it is not overflow protection proof.
 
-Follow-up patch: production counter immediately uses a conservative byte bound when the exact pair already fits the available window, avoiding two asynchronous tokenizer calls for normal short requests. Larger input still receives actual Apple counts before trimming. Structured logs report `input_measurement`, `tokenizer_calls`, `byte_bound_attempts`, and `preparation_ms`; skipped counts are never labeled actual token measurements. Stress noise now scales by `max(1, contextSize / 4096) * 3`, with English control unchanged and facts retained at heads, so raw-vs-bounded input comparison remains identical within each case. Eval labels exact-count preparation timing separately from production timing. Added conservative runtime26.4 guard around contextSize for originalSDK compatibility; earlierOS always4096. Parent re-run pending.
+Follow-up patch: production counter immediately uses a conservative byte bound when the exact pair already fits the available window, avoiding two asynchronous tokenizer calls for normal short requests. Larger input still receives actual Apple counts before trimming. Structured logs report `input_measurement`, `tokenizer_calls`, `byte_bound_attempts`, and `preparation_ms`; skipped counts are never labeled actual token measurements. Stress noise now scales by `max(1, contextSize / 4096) * 3`, with English control unchanged and facts retained at heads, so raw-vs-bounded input comparison remains identical within each case. Eval labels exact-count preparation timing separately from production timing. Added conservative runtime26.4 guard around contextSize for originalSDK compatibility; earlierOS always4096.
+
+## Final overflow evaluation follow-up
+
+Parent Release rerun (`build/validation/apple-context-final.log`) proves four raw overflow failures against8192 and bounded Chinese/Japanese/Korean success with reference recall4/4 total. Unchanged52cases: 1drift/0empty/0noise, p50301/p95522. Dense editor stress fits5669units but normalizes to empty, so5nonempty assertion fails. Current eval omitted bounded raw/suppression evidence; first repair is diagnostic only, preserving fixture and assertion for a targeted rerun. Do not loosen normalization or infer the failure cause without that evidence.
+
+## Dense editor diagnosis and final fixture repair
+
+Parent's unchanged-fixture diagnostic rerun established the cause: bounded raw output started `before Friday.報告書。...`, copying the text already following the caret; `suppressionReason=duplicatesTrailingText`. The pair fit its context budget and generation succeeded. The production normalizer correctly prevented duplicate insertion; this was a semantically ambiguous stress fixture, not budget overflow or an overaggressive normalization defect.
+
+Eval-only repair: retain that exact original request as `dense-editor-duplicate-suffix-control`, with raw/suppression diagnostics. It may return useful text; if empty, it must have nonempty raw output and exactly `duplicatesTrailingText`. Add a separate `dense-editor-tail` with the same oversized mixed Japanese/Korean/Thai filler and optional reference noise, followed by a coherent nearest-caret paragraph: `Release checklist:\nValidation has passed. Packaging is next. The next step is to `. Its suffix starts ` the signed app before Friday.\n\n` and keeps the same long Japanese filler. The missing packaging verb can now bridge into a real object and deadline. The suite still requires five useful nonempty results across its five intended-continuation cases; the preserved duplicate control is a sixth independent safety check. All before/after pairs still use identical input within each case.
+
+No production prompt, engine, or normalization changes for this repair. Failed evidence remains in `build/validation/apple-context-final.log` and the parent's diagnostic rerun log; do not overwrite it or report it as success. Worker diff check passed; parent final combined-suite execution pending. Parent also reports six `RecoveredFocusValidationTests` passed (separate scope).
+
+Scoped eval lint follow-up: split introduced diagnostic line and extracted the useful/safety assertion helper without changing gates or fixtures. Scoped `swiftlint lint --no-cache` and `git diff --check` run; existing nested-type and original long-fixture-line warnings remain out of scope.
+
+## Final live result
+
+`build/validation/apple-context-verified.log`: six scenarios passed. Five identical raw
+inputs failed Apple's actual 8192-token window; their bounded versions fit at 4762–5968
+measured tokens. All five intended continuations were nonempty, all four scored reference
+facts were recalled, and the unchanged duplicate-suffix control was correctly suppressed.
+The dense checklist continuation was grammatically awkward before the existing suffix:
+nonempty output is not semantic-quality proof. Mid-line wording remains a follow-up quality
+limitation; this patch does not alter normalization or claim to solve it.
+
+The unchanged 52-case Release suite in `apple-context-final.log` passed with 1 heuristic
+drift flag, 0 empty, 0 template noise, p50 301ms and p95 522ms (baseline 322/543). These
+single-run timings show no observed ordinary-case regression, not a statistical speed claim.
+Stress exact-count preparation took roughly 0.2–1.5 seconds in the final diagnostic run;
+it includes deliberately huge inputs and concurrent packaging load. Normal short requests
+use the byte fast path instead. No user text or screenshots were collected for these evals.
+
+The final wording-only edit labels the aggregate `intended_nonempty` and explains its
+semantic limit. No assertion, fixture, or production behavior changed after the passing run.

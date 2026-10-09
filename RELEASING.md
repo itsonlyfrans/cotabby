@@ -55,6 +55,37 @@ Developer ID signing alone is not a notarized release. Configure an owned `notar
 profile through Apple's supported credential flow; keep passwords/private keys out of commands,
 logs, notes, and this repository. The example profile name below contains no credential value.
 
+An existing signed-in Xcode account can also submit a **signed archive** without creating a
+`notarytool` profile. This path was verified locally for 1.0.0 (1). Build a separate archive
+with `CODE_SIGNING_ALLOWED=YES`, `CODE_SIGN_STYLE=Manual`, the owned Developer ID
+`CODE_SIGN_IDENTITY`, and `DEVELOPMENT_TEAM`. The unsigned archive above cannot pass Xcode's
+Developer ID export gate: the hardened-runtime flag must exist in its code signature.
+Export options use `method=developer-id`, `destination=upload`, `signingStyle=manual`, the
+owned team/certificate, `manageAppVersionAndBuildNumber=false`, and `uploadSymbols=false`.
+
+```bash
+xcodebuild -exportArchive \
+  -archivePath "build/fork-release/Cotabby Fork-signed.xcarchive" \
+  -exportOptionsPlist build/fork-release/ExportOptions-notarize.plist \
+  -exportPath build/fork-release/xcode-export-signed
+xcodebuild -exportNotarizedApp \
+  -archivePath "build/fork-release/Cotabby Fork-signed.xcarchive" \
+  -exportPath build/fork-release/notarized
+xcrun stapler validate "build/fork-release/notarized/Cotabby Fork.app"
+spctl --assess --type execute --verbose=2 "build/fork-release/notarized/Cotabby Fork.app"
+ditto -c -k --sequesterRsrc --keepParent \
+  "build/fork-release/notarized/Cotabby Fork.app" \
+  build/fork-release/Cotabby-Fork-1.0.0.zip
+```
+
+Upload success alone is not notarization acceptance. Require successful notarized export,
+ticket validation, deep/strict signature verification, and Gatekeeper acceptance, then repeat
+those checks on a fresh ZIP extraction. Do not re-sign the exported app or pass it through
+`package_fork_release.py`, which would replace its notarized signature. The verified ZIP
+preserves the stapled app; it does not establish notarization of an earlier DMG container.
+
+For the separately signed **DMG** route, submit that container itself with `notarytool`:
+
 ```bash
 xcrun notarytool submit build/fork-release/Cotabby-Fork.dmg \
   --keychain-profile cotabby-fork-notary --wait --timeout 60m
@@ -78,7 +109,8 @@ instances during this check to avoid two global input monitors.
 
 - Relevant source tests and Release build pass; record actual checks and limitations.
 - Built fork metadata, Developer ID signature, notarization acceptance, staple, and Gatekeeper
-  assessment pass for the final DMG. Record SHA-256 after stapling.
+  assessment pass for the final DMG or the stapled app extracted from the final ZIP.
+  Record SHA-256 after packaging/stapling.
 - Exact packaged app passes runtime checks. Confirm universal slices with `lipo -archs` before
   claiming Intel and Apple silicon support.
 - Select version, build number, release tag, and draft notes. Keep the release private/draft until

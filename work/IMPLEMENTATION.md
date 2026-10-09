@@ -153,7 +153,52 @@ REA closed and mounted image ejected. No Cotypist execution or proprietary sourc
 Fork UI now has manual release links instead of inert update buttons; fork repository
 links are correct. Project regenerated. Packaging venv is ready in build/fork-release/venv.
 Next: inspect joint tests, repair demonstrated failures, archive Fork Release 1.0.0
-build 2026100901 and sign/package with the existing Developer ID. Keychain metadata-only
+build 1 and sign/package with the existing Developer ID. Keychain metadata-only
 lookup found no discoverable notarization profiles and requested no password data/UI.
 Then refresh signed Dev without opening settings, record changelog, commit/push and create
 a reviewable fork PR/draft artifact. Respect Brave-only/no-foreground-switch steering.
+
+Draft PR created and attached: https://github.com/itsonlyfrans/cotabby/pull/1, source
+commit c2dab3b19b7e0635676e0e8a3f09b576ed446e5c. Build, lint and XcodeGen CI passed;
+test CI hit an older-compiler type-check timeout in RecoveredFocusValidationTests.
+The expression is now split into typed closures without changing test semantics.
+
+Final Apple run retained the 52-case results (1 drift / 0 empty / 0 noise), p50 301 ms,
+p95 522 ms against baseline 322/543. Enlarged stress cases now prove four raw inputs
+overflow the actual 8192-token window. Three bounded multilingual references succeed;
+all four scored references are recalled. Dense editor text still yields an empty
+completion, so the five-case gate remains failed and is being investigated before
+release packaging. History engine's seven integration tests passed. Logs remain under
+build/validation; the pure prompt/history predictor tests passed in the prior joint run.
+
+The diagnostic rerun proved the dense case generated a copy of the existing suffix;
+the normalizer correctly suppressed it as duplicatesTrailingText. Preserve that exact
+input as a safety control and add a coherent oversized checklist example. Production
+normalization is unchanged. The final six-scenario eval requires five nonempty intended
+continuations and rejects silent emptiness in the duplicate-suffix control.
+
+CI at 7ef04d150426 passed all four gates: 2839 Swift tests, 19 skipped, 0 failures;
+88 Python tooling tests; build; lint; XcodeGen consistency. Six focused recovery tests
+also passed locally. The universal Fork archive is building at version 1.0.0 (1).
+
+## Current handoff
+
+- Final six-scenario Apple context eval passed: five raw overflows became bounded
+  requests, all four reference facts recalled, five intended nonempty continuations,
+  duplicate suffix control suppressed correctly. Dense mid-line wording remains
+  awkward and is recorded as a quality limitation, not hidden by the passing budget gate.
+- Universal 1.0.0 (1) signed archive and Xcode notarization succeeded using the existing
+  account. No new profile or credentials needed. Final ZIP at
+  `build/fork-release/Cotabby-Fork-1.0.0.zip` passed ticket, signature and Gatekeeper
+  checks after fresh extraction; SHA-256 in `work/fork-release.md`.
+- Dev rebuilt, signed and staged. Strict signature and the existing permission
+  requirement pass. Background startup confirmed both required grants and all services.
+  No new desktop takeover or browser interaction occurred.
+- Cleanup was retried after staging: automatic review rejected the exact approved
+  deletion under `core.filesystem:rm-rf-general`. Both generated paths remain. Do not
+  bypass the hook or request the same permission again.
+- Changelog records the history/context fixes and notarized package. Remaining runtime
+  checks and mid-line wording are listed explicitly. No pictures were taken because
+  foreground interaction was deferred at the user's request.
+- Next: publish final source/evidence to the existing draft PR, create a draft release
+  containing the verified ZIP, check final CI, and report the actual completion limits.
