@@ -6,6 +6,149 @@ import XCTest
 /// transient bad ghosts, exact insertion, dismissal/cache reuse, and cancelled delayed display.
 @MainActor
 final class SuggestionCoordinatorWordCompletionTests: XCTestCase {
+    func testUniquePersonalVocabularyPrefixWinsBeforeModelPartialsOrDispatch() async {
+        for engine in [SuggestionEngineKind.appleIntelligence, .llamaOpenSource, .openAICompatible] {
+            let rig = makeCoordinatorRig(
+                snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "The codename is Quasarwic"),
+                settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(selectedEngine: engine,
+                    debounceMilliseconds: 1, streamSuggestionsWhileGenerating: true,
+                    personalVocabularyWords: ["Quasarwick"]))
+            defer { rig.coordinator.stop() }
+            // The real bug ended the unknown capitalized fragment with punctuation; such output
+            // passed the seam guard and never reached the previous final-result-only fallback.
+            rig.engine.partialTexts = [", a"]
+            rig.engine.resultProvider = { request in
+                .init(generation: request.generation, rawText: ", a", text: ", a", latency: 0.01)
+            }
+            rig.coordinator.schedulePrediction()
+            await waitUntil { rig.interactionState.activeSession != nil }
+            XCTAssertEqual(rig.overlayController.shownTexts, ["k"])
+            XCTAssertEqual(rig.interactionState.activeSession?.fullText, "k")
+            XCTAssertTrue(rig.engine.requests.isEmpty, "A unique saved word needs no model dispatch")
+            XCTAssertTrue(rig.coordinator.acceptCurrentSuggestion())
+            XCTAssertEqual(rig.inserter.insertedChunks, ["k"])
+            XCTAssertTrue(rig.inserter.replacements.isEmpty)
+        }
+    }
+
+    func testAmbiguousPersonalVocabularyPrefixStillUsesOrdinaryPrediction() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "The codename is Quasarwi"),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1,
+                personalVocabularyWords: ["Quasarwick", "Quasarwind"]))
+        defer { rig.coordinator.stop() }
+        rig.engine.resultProvider = { request in
+            .init(generation: request.generation, rawText: "nd", text: "nd", latency: 0.01)
+        }
+        rig.coordinator.schedulePrediction()
+        await waitUntil { rig.interactionState.activeSession != nil }
+        XCTAssertEqual(rig.engine.requests.first?.prefixText, "The codename is Quasarwi")
+        XCTAssertTrue(rig.interactionState.activeSession?.remainingText.hasPrefix("nd") == true)
+    }
+
+    func testPersonalVocabularyEndingCannotDuplicateTextAfterCaretEvenAsFinalFallback() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "North", trailingText: " wind"),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1,
+                personalVocabularyWords: ["Northwind"]))
+        defer { rig.coordinator.stop() }
+        rig.engine.resultProvider = { request in
+            .init(generation: request.generation, rawText: "", text: "", latency: 0.01)
+        }
+        let context = rig.interactionState.materializeContext(from: rig.focusProvider.snapshot.context!)
+        XCTAssertNil(rig.coordinator.personalVocabularyCompletion(context: context))
+        XCTAssertNil(rig.coordinator.localWordCompletion(context: context))
+        rig.coordinator.schedulePrediction()
+        await waitUntil { !rig.engine.requests.isEmpty && rig.coordinator.state == .idle }
+        XCTAssertNil(rig.interactionState.activeSession)
+        XCTAssertTrue(rig.overlayController.shownTexts.isEmpty)
+        XCTAssertTrue(rig.inserter.insertedChunks.isEmpty)
+    }
+
+    func testAcceptingExplicitVocabularyDoesNotAlterModelQualityCountersOrLatency() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "The codename is Quasarwic"),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(selectedEngine: .openAICompatible,
+                debounceMilliseconds: 1, personalVocabularyWords: ["Quasarwick"]))
+        defer { rig.coordinator.stop() }
+        let metrics = rig.coordinator.qualityMetricsStore
+        metrics.recordGenerated()
+        metrics.recordShown()
+        metrics.recordAcceptedSuggestion()
+        let baseline = metrics.counters
+        rig.coordinator.lastLatencyByEngine[.openAICompatible] = 120
+        rig.coordinator.schedulePrediction()
+        await waitUntil { rig.interactionState.activeSession != nil }
+        XCTAssertEqual(rig.interactionState.activeSession?.countsTowardModelQuality, false)
+        XCTAssertEqual(metrics.counters, baseline)
+        XCTAssertTrue(rig.coordinator.acceptCurrentSuggestion())
+        rig.coordinator.stop()
+        await waitUntil { rig.coordinator.totalTabAcceptedWordCount > 0 }
+        XCTAssertEqual(rig.inserter.insertedChunks, ["k"])
+        XCTAssertEqual(metrics.counters, baseline, "Explicit local acceptance is not a generated-model acceptance")
+        XCTAssertEqual(metrics.counters.acceptanceRate, 1)
+        XCTAssertEqual(rig.coordinator.lastLatencyByEngine[.openAICompatible], 120)
+    }
+
+    func testVocabularyBecomingAmbiguousCannotRestoreOldLocalEndingFromCache() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "The codename is Quasarwi"),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1,
+                personalVocabularyWords: ["Quasarwick"]))
+        defer { rig.coordinator.stop() }
+        rig.engine.resultProvider = { request in
+            .init(generation: request.generation, rawText: "", text: "", latency: 0.01)
+        }
+        let context = rig.interactionState.materializeContext(from: rig.focusProvider.snapshot.context!)
+        rig.coordinator.schedulePrediction()
+        await waitUntil { rig.interactionState.activeSession?.remainingText == "ck" }
+        XCTAssertTrue(rig.engine.requests.isEmpty)
+        XCTAssertNil(rig.coordinator.suggestionAnchorCache.remainder(
+            identityKey: context.suggestionSessionIdentityKey, precedingText: context.precedingText))
+
+        // Invalidating a session is a second cache-writing path, independent of the initial offer.
+        rig.coordinator.invalidateActiveSuggestion(reason: "Synthetic focus interruption")
+        XCTAssertNil(rig.coordinator.suggestionAnchorCache.remainder(
+            identityKey: context.suggestionSessionIdentityKey, precedingText: context.precedingText))
+        rig.coordinator.handleSuggestionSettingsChange(CotabbyTestFixtures.settingsSnapshot(
+            debounceMilliseconds: 1, personalVocabularyWords: ["Quasarwick", "Quasarwind"]))
+        await waitUntil { !rig.engine.requests.isEmpty && rig.coordinator.state == .idle }
+        XCTAssertEqual(rig.engine.requests.first?.prefixText, "The codename is Quasarwi")
+        XCTAssertEqual(rig.overlayController.shownTexts, ["ck"], "The old local offer must not reappear after ambiguity")
+        XCTAssertNil(rig.interactionState.activeSession)
+        XCTAssertEqual(rig.coordinator.qualityMetricsStore.counters.shown, 0)
+        XCTAssertEqual(rig.coordinator.qualityMetricsStore.counters.acceptedSuggestions, 0)
+        XCTAssertNil(rig.coordinator.qualityMetricsStore.counters.acceptanceRate)
+    }
+
+    func testLateOldEngineResultCannotReplaceDeterministicVocabularyEnding() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "The codename is "),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1,
+                personalVocabularyWords: ["Quasarwick"]))
+        defer { rig.coordinator.stop() }
+        var previousRequest: SuggestionRequest?
+        var previousCompletion: CheckedContinuation<SuggestionResult, Never>?
+        rig.engine.resultProvider = { request in
+            previousRequest = request
+            return await withCheckedContinuation { previousCompletion = $0 }
+        }
+        rig.coordinator.schedulePrediction()
+        await waitUntil { previousCompletion != nil }
+        publishText("The codename is Quasarwic", in: rig)
+        rig.coordinator.schedulePrediction()
+        await waitUntil { rig.interactionState.activeSession?.remainingText == "k" }
+        if let previousRequest {
+            previousCompletion?.resume(returning: .init(generation: previousRequest.generation,
+                rawText: ", a", text: ", a", latency: 0.01))
+        }
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(rig.overlayController.shownTexts, ["k"])
+        XCTAssertEqual(rig.interactionState.activeSession?.remainingText, "k")
+        XCTAssertEqual(rig.engine.requests.count, 1, "Only the earlier word-boundary request reached the engine")
+    }
+
     func testPersonalVocabularyProtectsCommittedNameAndBufferedWord() async {
         let rig = makeCoordinatorRig(
             snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Contact Recieve "),

@@ -6,13 +6,40 @@
     "accent": "#80647d",
     "hubHref": "../../Changelogs/index.html"
   },
-  "generatedAt": "2026-10-09T02:35:00.083089-04:00",
+  "generatedAt": "2026-10-09T03:09:59.707829-04:00",
   "days": [
     {
       "date": "2026-10-09",
       "sessions": [
         {
           "entries": [
+            {
+              "key": "personal-vocabulary",
+              "title": "Cotabby remembers the words you choose",
+              "summary": "Save names and specialist words in Writing settings. A unique saved prefix finishes locally before AI continues the sentence, and saved words keep their spelling.",
+              "category": "new",
+              "why": "Your project names and unusual surnames finish correctly instead of being guessed or treated as typos.",
+              "technical": {
+                "notes": "340 focused regression tests pass. 52 actual Apple Intelligence evaluation cases completed. Native global-key tests accepted Paris and completed Quasarwic to exactly Quasarwick. Local word offers do not inflate model-quality counters or reuse stale model caches."
+              },
+              "points": [
+                "Add or remove individual words, or clear the list.",
+                "Ambiguous prefixes wait for normal prediction; changing the list takes effect immediately.",
+                "The vocabulary list stays local and is not added to AI requests."
+              ],
+              "highlight": true,
+              "details": [
+                "Signed local development build; vocabulary controls and global Tab acceptance verified in TextEdit.",
+                "User-confirmed in normal use."
+              ],
+              "noPicture": "Native UI was inspected through Computer Use, but a clean app-only capture could not be saved. Whole-screen captures contained unrelated private windows and were discarded.",
+              "source": "cli",
+              "createdAt": "2026-10-09T06:34:35.853716+00:00",
+              "updatedAt": "2026-10-09T07:09:59.707361+00:00",
+              "update": "2026-10-09",
+              "headline": "Suggestions that respect your words",
+              "intro": "This development build adds a personal word list and fixes cases where suggestions could repeat or replace the wrong text."
+            },
             {
               "key": "focused-field-and-popup",
               "title": "Suggestions stay with the active writing field",
@@ -59,32 +86,6 @@
               "updatedAt": "2026-10-09T06:34:48.377845+00:00",
               "update": "2026-10-09",
               "headline": "Suggestions that respect your words"
-            },
-            {
-              "key": "personal-vocabulary",
-              "title": "Cotabby remembers the words you choose",
-              "summary": "Save names and specialist words in Writing settings. Cotabby preserves their spelling and can finish an unambiguous word prefix.",
-              "category": "new",
-              "why": "Your project names and unusual surnames stop being treated as typos.",
-              "technical": {
-                "notes": "317 focused regression tests pass. Native UI add, duplicate, remove, re-add, and pane-reopen persistence checks pass."
-              },
-              "points": [
-                "Add or remove individual words, or clear the list.",
-                "The vocabulary list stays local and is not added to AI requests."
-              ],
-              "highlight": true,
-              "details": [
-                "Signed development build; vocabulary controls verified in the app, system-wide typing checks in progress.",
-                "This still needs ordinary use testing."
-              ],
-              "noPicture": "Native UI was inspected through Computer Use, but a clean app-only capture could not be saved. Whole-screen captures contained unrelated private windows and were discarded.",
-              "source": "cli",
-              "createdAt": "2026-10-09T06:34:35.853716+00:00",
-              "updatedAt": "2026-10-09T06:34:35.853721+00:00",
-              "update": "2026-10-09",
-              "headline": "Suggestions that respect your words",
-              "intro": "This development build adds a personal word list and fixes cases where suggestions could repeat or replace the wrong text."
             }
           ],
           "build": {
@@ -111,8 +112,8 @@
     {
       "key": "live-app-verification",
       "kind": "todo",
-      "title": "Verify suggestions in everyday apps",
-      "summary": "Accessibility is enabled for Cotabby Dev. Input Monitoring is approved but macOS still requires user authentication. Global typing and the uninstalled Slack, Element, and Ferdium apps remain to be verified.",
+      "title": "Expand testing to more writing apps",
+      "summary": "Real global-key completion and Tab acceptance pass in TextEdit, including the saved-word fix. Chromium, Codex, Slack, Element, and Ferdium still need the wider focus and insertion matrix; the three messaging apps are not installed here.",
       "addedAt": "2026-10-09T06:29:11.953923+00:00"
     },
     {
@@ -131,6 +132,6 @@
     }
   ],
   "_engine": {
-    "renderSha256": "3d59d36a07bec0773fdf7863310ef60f85a2a2ca941846717d950775ad4e214d"
+    "renderSha256": "47055d58da124e66ce18b4150ca685aa5291d746e79afa7c1da815071b7f0846"
   }
 }

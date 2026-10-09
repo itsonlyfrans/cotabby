@@ -685,7 +685,7 @@ extension SuggestionCoordinator {
         CotabbyLogger.suggestion.debug("Invalidating active suggestion: \(reason)")
         // The dying session is exactly what a backspace-rollback wants restored a moment later;
         // remember it (string-only) before the state is torn down.
-        if let session = interactionState.activeSession, !session.kind.isCorrection {
+        if let session = interactionState.activeSession, session.countsTowardModelQuality, !session.kind.isCorrection {
             suggestionAnchorCache.record(
                 identityKey: session.baseContext.suggestionSessionIdentityKey,
                 precedingText: session.baseContext.precedingText,
@@ -729,7 +729,7 @@ extension SuggestionCoordinator {
     /// the first chunk counts, so word-by-word walks of one suggestion add nothing further and the
     /// acceptance rate stays suggestions-accepted over suggestions-shown.
     private func recordSuggestionAcceptedIfFirstChunk(of session: ActiveSuggestionSession) {
-        guard session.consumedCharacterCount == 0 else { return }
+        guard session.countsTowardModelQuality, session.consumedCharacterCount == 0 else { return }
         qualityMetricsStore.recordAcceptedSuggestion()
     }
 

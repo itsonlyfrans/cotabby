@@ -39,6 +39,16 @@ final class SuggestionModelValueTests: XCTestCase {
         XCTAssertEqual(underConsumed.remainingText, "hello")
     }
 
+    func test_activeSuggestionSessionPreservesLocalQualityProvenanceThroughCopies() throws {
+        let session = ActiveSuggestionSession(baseContext: CotabbyTestFixtures.focusedInputContext(),
+            fullText: "word", latency: 0, countsTowardModelQuality: false)
+        XCTAssertFalse(session.advancing(by: 1).countsTowardModelQuality)
+        XCTAssertFalse(session.withConsumedCharacters(1).countsTowardModelQuality)
+        XCTAssertFalse(try XCTUnwrap(session.extendingPrediction(to: "word again")).countsTowardModelQuality)
+        XCTAssertTrue(CotabbyTestFixtures.activeSession().countsTowardModelQuality,
+                      "Existing model sessions retain their default accounting")
+    }
+
     func test_activeSuggestionSession_advancingByNegativeCountIsANoOp() {
         let session = CotabbyTestFixtures.activeSession(fullText: "hello", consumedCharacterCount: 2)
 

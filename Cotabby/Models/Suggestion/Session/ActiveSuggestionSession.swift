@@ -24,6 +24,9 @@ struct ActiveSuggestionSession: Equatable, Sendable {
     /// represents a typo fix. The acceptance path branches on this so corrections always commit the
     /// whole word and replace the typo rather than appending forward text.
     let kind: SuggestionKind
+    /// Model quality counts only offers attributed to generation. Explicit local vocabulary offers
+    /// keep their own provenance through immutable copies so their acceptance cannot inflate it.
+    let countsTowardModelQuality: Bool
 
     init(
         baseContext: FocusedInputContext,
@@ -32,7 +35,8 @@ struct ActiveSuggestionSession: Equatable, Sendable {
         showFollowingWords: Bool = true,
         consumedCharacterCount: Int = 0,
         latency: TimeInterval,
-        kind: SuggestionKind = .continuation
+        kind: SuggestionKind = .continuation,
+        countsTowardModelQuality: Bool = true
     ) {
         self.baseContext = baseContext
         self.fullText = fullText
@@ -41,6 +45,7 @@ struct ActiveSuggestionSession: Equatable, Sendable {
         self.consumedCharacterCount = min(max(consumedCharacterCount, 0), fullText.count)
         self.latency = latency
         self.kind = kind
+        self.countsTowardModelQuality = countsTowardModelQuality
     }
 
     /// The full buffered tail is used to reconcile user-authored text and decide exhaustion. It
@@ -99,7 +104,8 @@ struct ActiveSuggestionSession: Equatable, Sendable {
             showFollowingWords: showFollowingWords,
             consumedCharacterCount: self.consumedCharacterCount + max(consumedCharacters, 0),
             latency: latency,
-            kind: kind
+            kind: kind,
+            countsTowardModelQuality: countsTowardModelQuality
         )
     }
 
@@ -113,7 +119,8 @@ struct ActiveSuggestionSession: Equatable, Sendable {
             showFollowingWords: showFollowingWords,
             consumedCharacterCount: consumedCharacters,
             latency: latency,
-            kind: kind
+            kind: kind,
+            countsTowardModelQuality: countsTowardModelQuality
         )
     }
 
@@ -129,7 +136,8 @@ struct ActiveSuggestionSession: Equatable, Sendable {
             showFollowingWords: showFollowingWords,
             consumedCharacterCount: consumedCharacterCount,
             latency: latency,
-            kind: kind
+            kind: kind,
+            countsTowardModelQuality: countsTowardModelQuality
         )
     }
 }

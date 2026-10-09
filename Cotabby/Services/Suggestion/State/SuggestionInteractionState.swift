@@ -56,7 +56,8 @@ final class SuggestionInteractionState {
         showFollowingWords: Bool = true,
         liveContext: FocusedInputContext,
         latency: TimeInterval,
-        kind: SuggestionKind = .continuation
+        kind: SuggestionKind = .continuation,
+        countsTowardModelQuality: Bool = true
     ) -> ActiveSuggestionSession {
         let session = ActiveSuggestionSession(
             baseContext: liveContext,
@@ -64,7 +65,8 @@ final class SuggestionInteractionState {
             initialVisibleCharacterCount: initialVisibleCharacterCount,
             showFollowingWords: showFollowingWords,
             latency: latency,
-            kind: kind
+            kind: kind,
+            countsTowardModelQuality: countsTowardModelQuality
         )
         activeSession = session
         pendingInsertionConsumedCount = nil

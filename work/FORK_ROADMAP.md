@@ -3,9 +3,9 @@
 This first pass prioritizes reliable completion and explicit vocabulary. Follow-up work
 should use measured behavior rather than add prompt rules speculatively.
 
-1. **Live host matrix:** after granting the development app Accessibility and Input
-   Monitoring, verify preview, TextEdit, a Chromium contenteditable, Codex, Slack,
-   Element and Ferdium. Exercise focus switches, mid-line text, accented corrections,
+1. **Live host matrix:** TextEdit completion and global Tab acceptance are verified
+   with both development-app permissions enabled. Expand to a Chromium contenteditable,
+   Codex, Slack, Element and Ferdium. Exercise focus switches, mid-line text, accented corrections,
    and popup placement near screen edges. The three newly recognized messaging apps
    are not installed on this machine, so recognition tests are not compatibility proof.
 2. **History spelling:** `TypingHistoryPhrasePredictor` keeps one latest display form

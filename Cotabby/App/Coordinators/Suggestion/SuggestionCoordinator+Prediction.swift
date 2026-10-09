@@ -106,6 +106,10 @@ extension SuggestionCoordinator {
         }
 
         let context = interactionState.materializeContext(from: rawContext)
+        // An explicitly saved exact word outranks a model's invented ending. Resolve it before
+        // restoring a cached phrase or dispatching partials, so an unknown capitalized fragment
+        // cannot commit punctuation while its saved final letters are still missing.
+        if presentPersonalVocabularyCompletion(context: context, workID: workID) { return }
         // Validate age before restoring prediction memory too. Expiry may synchronously cancel
         // work conditioned on the old excerpt; retry once with the now-cleared visual context.
         let visualContextSummary = permissionManager.screenRecordingGranted
@@ -335,7 +339,8 @@ extension SuggestionCoordinator {
     /// never matches.
     func prefetchContinuation(after session: ActiveSuggestionSession, rawContext: FocusedInputSnapshot) {
         guard !userDefaults.bool(forKey: Self.continuationPrefetchDisabledDefaultsKey) else { return }
-        guard !hasPrefetchedContinuation, case .continuation = session.kind else { return }
+        guard session.countsTowardModelQuality, !hasPrefetchedContinuation,
+              case .continuation = session.kind else { return }
         let remaining = session.remainingText
         guard !remaining.isEmpty, remaining.count <= Self.continuationPrefetchRemainingCharacters else { return }
         // The field once the ghost is typed through, from the session's own text: not the live
@@ -1018,11 +1023,13 @@ extension SuggestionCoordinator {
         qualityMetricsStore.recordShown(recoveringSuppression: result.suppressionReason)
         let session = startCompletionSession(prediction: prediction, visibleText: visibleText,
             context: liveContext, latency: result.latency, isFinal: true, wordEndingOnly: wordEndingOnly)
-        suggestionAnchorCache.record(
-            identityKey: liveContext.suggestionSessionIdentityKey,
-            precedingText: liveContext.precedingText,
-            fullText: session.fullText
-        )
+        if session.countsTowardModelQuality {
+            suggestionAnchorCache.record(
+                identityKey: liveContext.suggestionSessionIdentityKey,
+                precedingText: liveContext.precedingText,
+                fullText: session.fullText
+            )
+        }
         hasPrefetchedContinuation = false
         state = .ready(text: session.remainingText, latency: session.latency)
 
