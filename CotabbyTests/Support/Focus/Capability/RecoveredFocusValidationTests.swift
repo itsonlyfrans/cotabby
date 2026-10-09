@@ -25,11 +25,16 @@ final class RecoveredFocusValidationTests: XCTestCase {
     }
 
     func testTraversalStopsAtConfiguredBound() {
-        XCTAssertFalse(RecoveredFocusValidation.accepts(
+        // Resolve the generic node and closure types before XCTest's assertion autoclosure.
+        let windowOf: (String) -> String? = { _ in nil }
+        let parentOf: (String) -> String? = { $0 == "field" ? "renderer" : "current" }
+        let equal: (String, String) -> Bool = { $0 == $1 }
+        let isAccepted: Bool = RecoveredFocusValidation.accepts(
             "field", isFocused: true, expectedWindow: "current",
-            windowOf: { _ in nil }, parentOf: { $0 == "field" ? "renderer" : "current" },
-            equal: ==, maximumDepth: 1
-        ))
+            windowOf: windowOf, parentOf: parentOf,
+            equal: equal, maximumDepth: 1
+        )
+        XCTAssertFalse(isAccepted)
     }
 
     private func accepts(focused: Bool, windows: [String: String] = [:],
