@@ -200,5 +200,13 @@ also passed locally. The universal Fork archive is building at version 1.0.0 (1)
 - Changelog records the history/context fixes and notarized package. Remaining runtime
   checks and mid-line wording are listed explicitly. No pictures were taken because
   foreground interaction was deferred at the user's request.
-- Next: publish final source/evidence to the existing draft PR, create a draft release
-  containing the verified ZIP, check final CI, and report the actual completion limits.
+- Final source/evidence is pushed; PR: https://github.com/itsonlyfrans/cotabby/pull/1.
+  Draft release assets (ZIP and checksum) are uploaded at
+  https://github.com/itsonlyfrans/cotabby/releases/tag/untagged-ba8266a488c43abf69d7.
+  Release artifact source is 611a77015670f839a6eb86c3979a451fea0b3146; subsequent edits
+  only record this handoff. Final CI evidence is retained in
+  `build/validation/final-ci-summary.txt` after the checks complete.
+- Next on resume: interactive fork onboarding/Tab acceptance and wider Brave/native
+  host checks when the user permits foreground work; evaluate mid-line wording; clean
+  the already-approved cache only when the command policy permits it. Draft release
+  and PR remain unpublished/unmerged while those runtime checks are pending.
