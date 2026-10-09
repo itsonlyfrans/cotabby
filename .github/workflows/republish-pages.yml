@@ -26,6 +26,8 @@ concurrency:
 
 jobs:
   republish:
+    # This appcast and custom domain belong to upstream, never to a cloned fork.
+    if: github.repository == 'FuJacob/cotabby'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

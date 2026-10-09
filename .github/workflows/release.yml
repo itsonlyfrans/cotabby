@@ -57,6 +57,9 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: Build, sign, and package DMG
+    # This pipeline owns upstream identity, signing, Pages and Homebrew destinations.
+    # Fork releases use the isolated local path documented in RELEASING.md.
+    if: github.repository == 'FuJacob/cotabby'
     runs-on: macos-26
     timeout-minutes: 120
     permissions:
@@ -448,6 +451,7 @@ jobs:
   # ---------------------------------------------------------------------------
   notarize:
     name: Notarize and staple DMG
+    if: github.repository == 'FuJacob/cotabby'
     needs: build
     runs-on: macos-26
     timeout-minutes: 90
@@ -661,7 +665,7 @@ jobs:
   publish:
     name: Sign appcast, create release, and deploy Pages
     needs: [build, notarize]
-    if: needs.build.outputs.publish == 'true'
+    if: github.repository == 'FuJacob/cotabby' && needs.build.outputs.publish == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
@@ -856,7 +860,7 @@ jobs:
   update-homebrew-cask:
     name: Update Homebrew cask
     needs: [build, notarize, publish]
-    if: needs.build.outputs.publish == 'true'
+    if: github.repository == 'FuJacob/cotabby' && needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions: {}
     steps:

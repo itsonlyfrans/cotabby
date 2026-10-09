@@ -265,6 +265,140 @@ final class FoundationModelPromptRendererTests: XCTestCase {
         )
     }
 
+    func test_combinedBudgetPreservesExactShortRenderAndCountsBothChannels() async throws {
+        let request = makeRequest(prefixText: "Thanks for ", clipboardContext: "Q3.xlsx",
+            visualContextSummary: "Budget due Friday", customRules: ["Keep it casual"],
+            extendedContext: "Glossary: meow = cat sound", languageInstruction: "Write in French.")
+        var counted: [FoundationModelPromptRenderer.Payload] = []
+        let payload = try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 4096) {
+            counted.append($0)
+            return $0.utf8Count
+        }
+        XCTAssertEqual(counted.count, 1)
+        XCTAssertEqual(payload.instructions, FoundationModelPromptRenderer.sessionInstructions(for: request))
+        XCTAssertEqual(payload.prompt, FoundationModelPromptRenderer.prompt(for: request))
+        XCTAssertTrue(payload.instructions.contains("Write in French."))
+        XCTAssertTrue(payload.prompt.contains("Q3.xlsx"))
+    }
+
+    func test_combinedByteBudgetBoundsDenseUnicodeAndRetainsCaretNearestText() async throws {
+        for source in ["東京の報告書", "대한민국보고서", "ประชุมรายงาน", "🧑🏽‍💻📋"] {
+            let request = makeRequest(applicationName: String(repeating: source, count: 100),
+                prefixText: String(repeating: source, count: 800) + " CARET_NEAREST_END ",
+                trailingText: "SUFFIX_NEAREST_START " + String(repeating: source, count: 800),
+                clipboardContext: String(repeating: source, count: 800),
+                visualContextSummary: String(repeating: source, count: 800),
+                surfaceContext: SurfaceContext(surfaceClass: .other, applicationName: "TestApp",
+                    windowTitle: String(repeating: source, count: 100), domain: "example.com", fieldPlaceholder: "Body"),
+                customRules: [String(repeating: source, count: 100)],
+                extendedContext: String(repeating: source, count: 800),
+                languageInstruction: String(repeating: source, count: 100),
+                historyExamples: [String(repeating: source, count: 100)])
+            var counts = 0
+            let payload = try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 4096) {
+                counts += 1
+                return $0.utf8Count
+            }
+            XCTAssertLessThanOrEqual(payload.utf8Count + request.maxPredictionTokens + 128, 4096)
+            XCTAssertTrue(payload.prompt.contains("CARET_NEAREST_END "), source)
+            XCTAssertTrue(payload.prompt.contains("SUFFIX_NEAREST_START "), source)
+            XCTAssertTrue(payload.instructions.contains("Output the continuation only:"))
+            XCTAssertTrue(payload.instructions.contains("Do not repeat or quote the existing text."))
+            XCTAssertTrue(payload.prompt.contains("Write only the next continuation fragment."))
+            XCTAssertLessThanOrEqual(counts, FoundationModelPromptRenderer.maximumBudgetRefits)
+        }
+    }
+
+    func test_refitPreservesExactUTF8AndWholeCaretGraphemes() async throws {
+        // Decomposed accents and a skin-tone ZWJ emoji deliberately exercise Character boundaries.
+        // Compare bytes as well as String equality, which otherwise treats canonical forms alike.
+        let nearestPrefix = "Cafe\u{301} 🧑🏽‍💻 résumé 東京 next words "
+        let nearestSuffix = "🧑🏽‍💻 Cafe\u{301} 東京 after the caret; "
+        let prefix = String(repeating: "older text ", count: 1500) + nearestPrefix
+        let suffix = nearestSuffix + String(repeating: "later text ", count: 1500)
+        let request = makeRequest(prefixText: prefix, trailingText: suffix, maxSuffixCharacters: suffix.count)
+        let payload = try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 4096) { $0.utf8Count }
+        let before = try XCTUnwrap(payload.prompt.components(separatedBy: "Text before the caret:\n").last?
+            .components(separatedBy: "\n\nText after the caret:").first)
+        let after = try XCTUnwrap(payload.prompt.components(separatedBy: "Text after the caret:\n").last?
+            .components(separatedBy: "\n\nWrite only the next continuation fragment.").first)
+        XCTAssertEqual(Array(before.suffix(nearestPrefix.count).utf8), Array(nearestPrefix.utf8))
+        XCTAssertEqual(Array(after.prefix(nearestSuffix.count).utf8), Array(nearestSuffix.utf8))
+        XCTAssertEqual(Array(before.utf8), Array(prefix.suffix(before.count).utf8))
+        XCTAssertEqual(Array(after.utf8), Array(suffix.prefix(after.count).utf8))
+        XCTAssertLessThanOrEqual(payload.utf8Count + request.maxPredictionTokens + 128, 4096)
+    }
+
+    func test_tokenBudgetUsesInjectedCountRatherThanCharacterOrByteHeuristic() async throws {
+        let request = makeRequest(prefixText: "Keep this exact tail ",
+            visualContextSummary: String(repeating: "Context. ", count: 500))
+        let original = FoundationModelPromptRenderer.Content(request).payload
+        var counts = 0
+        let payload = try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 1000) {
+            counts += 1
+            // Deliberately token-dense screen text. Only the supplied combined count can determine
+            // fit; this protects the modern path from falling back to a chars/4 approximation.
+            return $0.prompt.contains("Context. Context.") ? 1200 : 300
+        }
+        XCTAssertGreaterThan(counts, 1)
+        XCTAssertNotEqual(payload, original)
+        XCTAssertTrue(payload.prompt.contains("Keep this exact tail "))
+    }
+
+    func test_impossibleCombinedBudgetThrowsBeforeAnyCountOrDispatch() async {
+        let request = makeRequest(prefixText: "Hello")
+        var counts = 0
+        do {
+            _ = try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 128) {
+                counts += 1
+                return $0.utf8Count
+            }
+            XCTFail("The response/framing reservation cannot fit")
+        } catch FoundationModelPromptRenderer.BudgetError.cannotFit {} catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(counts, 0)
+    }
+
+    func test_fixedContractCannotBeTruncatedToMakeImpossiblePayloadFit() async {
+        let request = makeRequest(prefixText: "Hello")
+        var counts = 0
+        do {
+            _ = try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 400) {
+                counts += 1
+                XCTAssertTrue($0.instructions.contains("Output the continuation only:"))
+                return $0.utf8Count
+            }
+            XCTFail("The fixed continuation contract cannot fit this context")
+        } catch FoundationModelPromptRenderer.BudgetError.cannotFit {} catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertLessThanOrEqual(counts, FoundationModelPromptRenderer.maximumBudgetRefits)
+    }
+
+    func test_cancellationAfterAsyncCountStopsBeforeReturningFittingPayload() async {
+        let request = makeRequest(prefixText: "Hello")
+        let task = Task {
+            try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 4096) { _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+                return 0
+            }
+        }
+        do { _ = try await task.value; XCTFail("A cancelled count must not produce a dispatchable payload") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    func test_cancellationDuringRefitStopsWithoutFurtherCounting() async {
+        let request = makeRequest(prefixText: "Hello", visualContextSummary: String(repeating: "context", count: 1000))
+        let task = Task {
+            var counts = 0
+            return try await FoundationModelPromptRenderer.preparePayload(for: request, contextSize: 4096) { _ in
+                counts += 1
+                if counts == 2 { withUnsafeCurrentTask { $0?.cancel() } }
+                XCTAssertLessThanOrEqual(counts, 2)
+                return 10_000
+            }
+        }
+        do { _ = try await task.value; XCTFail("A cancelled refit must stop") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
     // MARK: - Helpers
 
     /// The shared fixture cannot set the bundle identifier, suffix bound, or surface facts, which
@@ -277,7 +411,9 @@ final class FoundationModelPromptRendererTests: XCTestCase {
         maxSuffixCharacters: Int = 192,
         clipboardContext: String? = nil,
         visualContextSummary: String? = nil,
-        surfaceContext: SurfaceContext? = nil
+        surfaceContext: SurfaceContext? = nil,
+        customRules: [String] = [], extendedContext: String? = nil,
+        languageInstruction: String? = nil, historyExamples: [String] = []
     ) -> SuggestionRequest {
         SuggestionRequest(
             context: CotabbyTestFixtures.focusedInputContext(
@@ -299,11 +435,13 @@ final class FoundationModelPromptRendererTests: XCTestCase {
             maxSuffixCharacters: maxSuffixCharacters,
             completionLengthInstruction: "Return only the next 7 to 12 words.",
             userName: nil,
-            customRules: [],
-            languageInstruction: nil,
+            customRules: customRules,
+            extendedContext: extendedContext,
+            languageInstruction: languageInstruction,
             clipboardContext: clipboardContext,
             visualContextSummary: visualContextSummary,
             surfaceContext: surfaceContext,
+            historyExamples: historyExamples,
             isMultiLineEnabled: false
         )
     }

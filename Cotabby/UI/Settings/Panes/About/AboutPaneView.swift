@@ -46,10 +46,23 @@ struct AboutPaneView: View {
 
             Spacer(minLength: 12)
 
-            Button {
-                appUpdateManager.checkForUpdates()
-            } label: {
-                Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+            if let releasesURL = appUpdateManager.manualReleasesURL {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Link(destination: releasesURL) {
+                        Label("View Fork Releases", systemImage: "arrow.up.right.square")
+                    }
+                    .help("Fork updates are installed manually. Download a newer version from the releases page.")
+                    Text("Install fork updates manually.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Button {
+                    appUpdateManager.checkForUpdates()
+                } label: {
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!appUpdateManager.supportsAutomaticUpdates)
             }
         }
         .padding(.vertical, 4)
@@ -90,7 +103,7 @@ struct AboutPaneView: View {
     /// search can scroll to and pulse individually.
     @ViewBuilder
     private var resourceRows: some View {
-        if let repoURL = URL(string: "https://github.com/FuJacob/Cotabby") {
+        if let repoURL = appUpdateManager.sourceRepositoryURL {
             Link(destination: repoURL) {
                 Label("GitHub Repository", systemImage: "chevron.left.forwardslash.chevron.right")
             }

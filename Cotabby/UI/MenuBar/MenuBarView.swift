@@ -75,7 +75,7 @@ struct MenuBarView: View {
             }
 
             // A plain source link keeps project information separate from the product title.
-            if let projectURL = URL(string: "https://github.com/FuJacob/cotabby") {
+            if let projectURL = appUpdateManager.sourceRepositoryURL {
                 Link("GitHub", destination: projectURL)
                     .buttonStyle(.borderless)
                     .font(.subheadline)
@@ -322,10 +322,17 @@ struct MenuBarView: View {
             }
             .buttonStyle(.borderless)
 
-            Button("Check for Updates") {
-                appUpdateManager.checkForUpdates()
+            if let releasesURL = appUpdateManager.manualReleasesURL {
+                Link("View Fork Releases", destination: releasesURL)
+                    .buttonStyle(.borderless)
+                    .help("Fork updates are installed manually. Download a newer version from the releases page.")
+            } else {
+                Button("Check for Updates") {
+                    appUpdateManager.checkForUpdates()
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appUpdateManager.supportsAutomaticUpdates)
             }
-            .buttonStyle(.borderless)
 
             Spacer(minLength: 0)
 

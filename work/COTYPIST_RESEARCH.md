@@ -10,7 +10,7 @@ Inspected 2026-10-09. Scope: `/Users/owl/Downloads/Cotypist.dmg`, static only. C
 - Inventory Evidence `ev_69a44a7f62a06868d10c063cd31d5d3d5c19b1589a662b6dea2ba808aa2426d5`; graph manifest `agm_3ed2628a46fb05d45eabab3325af1977d759edb8e337af8b30a7dab62d61bf0e`; complete inline Evidence: `inventory-evidence.json`.
 - Parsed plist Evidence `ev_fde46c8ad2a7e20d029e67d6481a81bde27b4042cf4ec9007d5ce65da2518045`: `plist-evidence.json`.
 - Mach-O Evidence `ev_237730d6204d1439314f21bd168ddf3429cdfa56022e3c2e04edf6a7bc0a7ed5`: `macho-evidence.json`.
-- Supplemental local Evidence `local_static_ascii_offsets_v1`: `local-static-evidence.json`, `matching-strings.tsv`, `state-strings.tsv`, `symbols.txt`, `linked-libraries.txt`. Addresses below are **file offsets**, not virtual addresses.
+- Supplemental local Evidence `local_static_ascii_offsets_v1`: `local-static-evidence.json`, `matching-strings.tsv`, `state-strings.tsv`, `symbols.txt`, `linked-libraries.txt`. Addresses in the inventory/string sections are **file offsets**. The later native control-flow section explicitly uses **unslid virtual addresses**.
 
 ## Observed shipped components
 
@@ -46,7 +46,7 @@ These are observed settings/help strings describing intended behavior. They are 
 - Metadata includes `TextFieldContextCapture`, `ScreenshotContext`, `PromptCoordinator`, and prompt-boundary offsets. OCR context is plausible from Vision and screen capture dependencies, but exact capture scope, truncation, redaction and prompt assembly are **unknown**.
 - Typing-history customization is described in UI text. Its encryption, iCloud sync guarantees, retention, and implementation cannot be independently verified from strings alone.
 - No conclusion is drawn about use of Sentry session replay, network privacy, or transmission of text simply because Sentry is bundled.
-- Initial Ghidra focused searches returned no result within the bounded pass and were cancelled. No pseudocode or function-control-flow findings are claimed. REA DMG inventory worked; its DMG extraction operation reported unavailable. A separate owned read-only mount provided the native binary for metadata inspection.
+- Initial Ghidra focused searches returned no result within the bounded pass and were cancelled. The deeper follow-up recovered the limited instruction-level branches documented below; no completed Ghidra pseudocode was obtained. REA DMG inventory worked; its DMG extraction operation reported unavailable. A separate owned read-only mount provided the native binary for metadata inspection.
 
 ## Independently implementable ideas for Cotabby
 
@@ -59,3 +59,34 @@ These are observed settings/help strings describing intended behavior. They are 
 7. **Start personalization with user-controlled instructions or personal terms.** Avoid automatic keystroke history as the initial implementation. If later added, require explicit consent, per-app exclusions, deletion and verified encrypted storage. Cotypist's UI describes history-based word preference, not a recovered personal dictionary algorithm.
 
 These are candidate product behaviors and engineering designs. Actual Cotabby defects or coverage must be assessed from Cotabby's source and runtime independently.
+
+## Deeper native control-flow follow-up
+
+This pass used the requested REA native provider and then supplemental LLVM ARM64 disassembly when the provider exceeded its response deadline. The binary SHA-256 still matches the REA Mach-O Evidence above. No Cotypist process or model was run. Raw instruction and metadata evidence remains in ignored `build/research/`; the report contains behavior, addresses and evidence references, not implementation code.
+
+### Observed: secure and search subroles take an early false return
+
+Supplemental Evidence `local_native_arm64_control_flow_v2`, manifest `build/research/native-instruction-manifest.json`, plus `local_native_selector_decode_v2` in `native-selector-evidence.json`. Every address here is an **unslid virtual address**.
+
+- The routine starting at `0x10009c020` calls the role reader at `0x10009c164` and subrole reader at `0x10009c16c`. Helpers `0x10024e650` and `0x10024ecc8` load the imported `NSAccessibilityRoleAttribute` and `NSAccessibilitySubroleAttribute`. Their shared helper sends `UIElementUtilities.valueOfAttribute:ofUIElement:` through Objective-C stub `0x100b15c60`. The selector slot and class are independently resolved in the selector evidence.
+- Initializer `0x1000a7868` loads `NSAccessibilitySecureTextFieldSubrole` from import slot `0x100c97448` and `NSAccessibilitySearchFieldSubrole` from `0x100c97440`, constructs a Swift Set with capacity two, adds both values, and stores it at global `0x100d67838`.
+- The routine loads that set at `0x10009c1ec` and checks the returned subrole at `0x10009c200`. The thunk at `0x1006eca44` branches to `0x1006e6b54`; its body performs a hash lookup with string comparisons and returns a Boolean membership result.
+- Branch `0x10009c210` continues at `0x10009c230` when membership is false. When membership is true, cleanup leads to `0x10009c674`, which sets return register `w0` to zero and returns at `0x10009c69c`. This establishes a reachable exclusion branch for both secure and search subroles in this routine, beyond an import or UI string.
+
+**Inferred:** this routine participates in field eligibility, given its AX role/subrole reads, role-set check, and Boolean result. Its source name and callers were not recovered, so this does not prove every context collection, generation or insertion path passes through it. It also does not establish a global guarantee that no field value was previously read.
+
+**Observed boundary:** a missing subrole takes `cbz x23` at `0x10009c1d4` directly to the continuation at `0x10009c230`. This particular subrole check therefore does not reject every element with unavailable AX subrole metadata. Other checks in the routine still apply; successful eligibility is not established by this branch alone.
+
+**Independent Cotabby comparison:** keep secure-field exclusion before collecting text, and consider suppressing unsolicited suggestions in AX search fields to avoid interfering with navigation and queries. Treat missing AX metadata as a deliberate compatibility/privacy policy and verify it separately. These are behavior-level recommendations, not a request to copy recovered code or weaken Cotabby's existing gates.
+
+### Observed: one Secure Input helper returns an empty collection when disabled
+
+The complete small routine at `0x1007c9df0` calls imported `IsSecureEventInputEnabled` at `0x1007c9dfc`. It loads `__swiftEmptyArrayStorage`, then `cbz w8` at `0x1007c9e0c` returns that empty collection when Secure Input is disabled. When enabled, it runs two once-initialized branches and calls `0x1007ce7e8` twice with distinct kind values before returning the resulting collection. Evidence: `secure-input-shortcut-diagnostic.asm.txt` and import mappings in `indirect-symbols.txt`.
+
+**Inferred, limited:** the surrounding metadata and UI text suggest shortcut/status diagnostics. The branch itself is observed; the collection's complete meaning and callers are not established. This is **not evidence that Cotypist globally pauses completion inference when system Secure Input is enabled**. Cotabby may independently choose that stronger gate.
+
+### Provider outcome and remaining questions
+
+Supplemental diagnostic `local_rea_ghidra_attempt_v2` in `build/research/rea-ghidra-attempt-diagnostic.json` records the bounded provider attempt. REA run `8a917085-3492-4d7d-ac79-74e362d16b12` opened the matching main binary with existing Ghidra 12.1.4 and Java 21. The focused `Secure|correct|accept` procedure search returned the MCP error `timed out awaiting tools/call after 300s` before whole-binary analysis completed. The log showed unsupported Objective-C type encoding `T` in the metadata analyzer and subsequent decompiler-switch progress, so those warnings alone do not establish a fatal analyzer failure. No matching saved database was available: the owned headless job used `-readOnly -deleteProject`. The temporary log was removed on provider cleanup; the diagnostic preserves the error and reported excerpts, not a complete original log.
+
+REA session closure was verified with `binary_session.open=false`; the owned read-only DMG mount was ejected (`disk40`). Relevant snippets and manifest hashes were checked against the matching binary. Cotypist runtime execution remains unverified. Current-word correction thresholds, exact acceptance boundaries, focus snapshot invalidation, and the placement of all privacy filters remain **unknown control flow**; their UI descriptions and import clues should not be promoted to implementation findings.

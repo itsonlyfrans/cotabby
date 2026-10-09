@@ -107,6 +107,53 @@ running without debug logging. Changelog and local validation evidence updated.
 
 Remaining scope is the wider host matrix and the separate limitations in
 `FORK_ROADMAP.md`. Slack, Element, and Ferdium are not installed.
-Cleanup of generated DerivedData and the
-previous Dev bundle was blocked by the command safety hook's recursive-deletion rule;
-explicit user approval is pending. Retain final app and research/log evidence.
+The user explicitly approved deleting only generated DerivedData and the previous Dev
+bundle on 2026-10-09. The command safety hook still rejected the scoped deletion under
+`core.filesystem:rm-rf-root-home`; both paths remain. Approval is already granted: do
+not ask again or bypass the hook. Retain final app and research/log evidence.
+
+## Follow-up accepted 2026-10-09
+
+The user requested all remaining work: fix phrase capitalization and the combined
+Apple context budget, expand live host checks, deepen Cotypist control-flow evidence,
+prepare an isolated fork release, and complete the already-approved generated-cache
+cleanup when the command safety policy permits it. Existing engine and Dev permission
+approvals persist. Main goal and privacy choices remain unchanged.
+
+Assignments: history worker owns phrase casing and focused tests; native operator owns
+the host matrix; REA worker owns deeper static evidence; release reviewer owns fork
+packaging isolation. Parent owns Apple budgeting, shared builds, integration, release
+gates and publication. Before/after Apple Release eval runs use identical cases.
+
+User steering: use Brave only for browser verification. Chromium activation interrupted
+the user, so stop Chromium/Chrome and foreground switching. Browser checks must stay in
+an isolated Brave task session without stealing focus; defer native global-key host
+checks that require taking over the user's desktop. Background implementation/builds
+continue.
+
+Fresh Apple Release baseline passed 52 identical cases (1 drift flag, 0 empty, 0 noise;
+p50 322 ms, p95 543 ms). Evidence: `build/validation/apple-context-before.log`.
+Fork distribution certificate is available; GitHub release secrets are absent. The user
+does not know a saved notarization profile, so finish signed packaging and identify
+the exact Apple authentication boundary without requesting or displaying credentials.
+
+Follow-up source complete; joint Release validation running in
+`build/validation/followup-tests-and-apple-after.log` (exec session 66672): history
+predictor, Apple prompt pure tests, unchanged 52 live cases and 5 raw-before/bounded-after
+multilingual stress cases. Apple uses real counts on macOS 26.4+/Xcode 26.4+; older SDK/OS
+falls back to a conservative combined byte budget. Independent source review passed.
+
+History casing now retains per-context spelling with interned forms; construction still
+stores one Int32 per token. Exact-source -O benchmark on 10k synthetic records measured
+37.28 MiB old peak vs 37.33 MiB optimized peak (3 runs each; whole-process caveats).
+Cotypist follow-up verified secure/search AX-subrole exclusion in one routine and one
+Secure Input diagnostic branch; broader correction/acceptance algorithms remain unknown.
+REA closed and mounted image ejected. No Cotypist execution or proprietary source copied.
+
+Fork UI now has manual release links instead of inert update buttons; fork repository
+links are correct. Project regenerated. Packaging venv is ready in build/fork-release/venv.
+Next: inspect joint tests, repair demonstrated failures, archive Fork Release 1.0.0
+build 2026100901 and sign/package with the existing Developer ID. Keychain metadata-only
+lookup found no discoverable notarization profiles and requested no password data/UI.
+Then refresh signed Dev without opening settings, record changelog, commit/push and create
+a reviewable fork PR/draft artifact. Respect Brave-only/no-foreground-switch steering.

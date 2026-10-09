@@ -85,6 +85,62 @@ final class TypingHistoryPhrasePredictorTests: XCTestCase {
         XCTAssertEqual(predictor(history).continuation(after: "Then we will start the ", limits: twoWords), "imperum POC")
     }
 
+    func test_unrelatedLowercaseTokensCannotRewriteALearnedPhrase() {
+        let learned = Array(repeating: "we will start the Imperum POC with the SOC team", count: 6)
+        let history = learned + ["unrelated notes contain imperum poc and soc today"]
+
+        XCTAssertEqual(
+            predictor(history).continuation(after: "we will start the ", limits: limits),
+            "Imperum POC with the SOC team"
+        )
+        XCTAssertEqual(
+            predictor(history).continuation(after: "we will start the Im", limits: limits),
+            "perum POC with the SOC team"
+        )
+    }
+
+    func test_eachPhraseContextKeepsItsOwnLatestSpelling() {
+        let uppercase = Array(repeating: "we will start the POC now", count: 6)
+        let lowercase = Array(repeating: "please refer to the poc later", count: 6)
+        let history = predictor(uppercase + lowercase)
+
+        XCTAssertEqual(history.continuation(after: "we will start the ", limits: limits), "POC now")
+        XCTAssertEqual(history.continuation(after: "please refer to the ", limits: limits), "poc later")
+    }
+
+    func test_samePhraseContextUsesItsOwnLatestSpelling() {
+        let earlier = Array(repeating: "we will start the poc now", count: 6)
+        let history = earlier + ["we will start the POC now", "unrelated mentions poc elsewhere"]
+
+        XCTAssertEqual(predictor(history).continuation(after: "we will start the ", limits: limits), "POC now")
+    }
+
+    func test_twoWordFallbackRetainsContextSpelling() {
+        let signoffs = (0..<6).map { "Topic number \($0) is done.\nKind regards,\nSenad" }
+        let history = predictor(signoffs + ["unrelated mentions of senad occur here"])
+        let multiLine = TypingHistoryPhrasePredictor.Limits(maxWords: 4, allowsNewlines: true)
+
+        XCTAssertEqual(
+            history.continuation(after: "Something new.\nKind regards,", limits: multiLine), "\nSenad"
+        )
+    }
+
+    func test_contextSpellingStorageIsInternedRatherThanCopiedForEveryOccurrence() {
+        let phrase = "we will start the Imperum POC with the SOC team"
+        let texts = Array(repeating: phrase, count: 6)
+            + Array(repeating: "unrelated mentions imperum poc soc", count: 6)
+        let small = predictor(texts).spellingStorageComparison
+        let repeated = predictor(Array(repeating: texts, count: 100).flatMap { $0 }).spellingStorageComparison
+
+        XCTAssertEqual(small.previousBytes, repeated.previousBytes)
+        XCTAssertEqual(small.currentBytes, repeated.currentBytes)
+        XCTAssertEqual(small.extraSpellings, 3)
+        XCTAssertEqual(
+            small.currentBytes - small.previousBytes,
+            small.transitions * MemoryLayout<Int32>.stride + small.extraSpellings * MemoryLayout<String>.stride
+        )
+    }
+
     func test_multiLineHistoryRespectsTheWordLimitWithoutRewritingTheSignature() {
         let history = Array(repeating: "Thanks for your time.\nKind regards,\nSenad Aruc\nImperum B.V.", count: 6)
         let twoWords = TypingHistoryPhrasePredictor.Limits(maxWords: 2, allowsNewlines: true)

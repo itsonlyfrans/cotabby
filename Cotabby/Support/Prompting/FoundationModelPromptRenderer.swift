@@ -10,7 +10,159 @@ import Foundation
 /// Foundation Models gives us a first-class instructions channel. Keeping that translation here
 /// prevents Apple-specific prompt policy from leaking back into `SuggestionCoordinator` or the
 /// shared request factory.
-enum FoundationModelPromptRenderer {
+nonisolated enum FoundationModelPromptRenderer {
+    /// The exact two-channel payload passed to one pristine Apple session. Budgeting this pair
+    /// together prevents optional instructions from silently competing with the prompt for context.
+    struct Payload: Equatable, Sendable {
+        let instructions: String
+        let prompt: String
+        var utf8Count: Int { instructions.utf8.count + prompt.utf8.count }
+    }
+
+    enum BudgetError: Error { case cannotFit }
+    static let framingTokenReserve = 128
+    static let maximumBudgetRefits = 64
+
+    /// Mutable rendering inputs live only during one preparation. Trimming these values preserves
+    /// section framing and the fixed continuation contract; slicing a rendered prompt would not.
+    struct Content: Sendable {
+        var applicationName: String
+        var toneHint: String?
+        var surfaceFacts: [String]
+        var visualContextSummary: String?
+        var historyExamples: [String]
+        var clipboardContext: String?
+        var prefixText: String
+        var trailingText: String
+        var completionLengthInstruction: String
+        var languageInstruction: String?
+        var customRules: [String]
+        var extendedContext: String?
+
+        init(_ request: SuggestionRequest) {
+            applicationName = request.context.applicationName
+            toneHint = FoundationModelPromptRenderer.appToneHint(forBundleIdentifier: request.context.bundleIdentifier)
+            surfaceFacts = []
+            if let surface = request.surfaceContext {
+                if let title = surface.windowTitle { surfaceFacts.append("The window is titled \"\(title)\".") }
+                if let domain = surface.domain { surfaceFacts.append("The user is on \(domain).") }
+                if let placeholder = surface.fieldPlaceholder {
+                    surfaceFacts.append("The text field is labeled \"\(placeholder)\".")
+                }
+            }
+            visualContextSummary = request.visualContextSummary
+            historyExamples = request.historyExamples.filter { !$0.isEmpty }
+            clipboardContext = request.clipboardContext
+            prefixText = request.prefixText
+            trailingText = String(request.context.trailingText.prefix(max(0, request.maxSuffixCharacters)))
+            completionLengthInstruction = request.completionLengthInstruction
+            languageInstruction = request.languageInstruction
+            customRules = request.customRules.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            extendedContext = request.extendedContext
+        }
+
+        var payload: Payload {
+            Payload(instructions: FoundationModelPromptRenderer.sessionInstructions(for: self),
+                    prompt: FoundationModelPromptRenderer.prompt(for: self))
+        }
+
+        /// First reduce oversized optional sources to useful excerpts, then drop lower-priority
+        /// sources before touching editor text. Keeping a small excerpt from each avoids one large
+        /// OCR capture crowding every reference out. Prefix keeps its tail; suffix keeps its head.
+        mutating func shrink() -> Bool {
+            if shrinkOversizedReferences() { return true }
+            if removeOptionalReference() { return true }
+            // Sixty-four complete graphemes leave useful nearby words on both sides of a caret.
+            // Never cut UTF-8 or a composed emoji to make the payload fit; fail if this floor plus
+            // the fixed output contract still exceeds the window.
+            if trailingText.count > 64 {
+                trailingText = String(trailingText.prefix(max(64, trailingText.count / 2)))
+                return true
+            }
+            if prefixText.count > 64 {
+                prefixText = String(prefixText.suffix(max(64, prefixText.count / 2)))
+                return true
+            }
+            return false
+        }
+
+        private mutating func shrinkOversizedReferences() -> Bool {
+            var changed = false
+            if historyExamples.reduce(0, { $0 + $1.count }) > 512 {
+                historyExamples = Array(historyExamples.prefix(max(1, historyExamples.count / 2)))
+                    .map { String($0.prefix(max(64, $0.count / 2))) }
+                changed = true
+            }
+            if customRules.reduce(0, { $0 + $1.count }) > 256 {
+                customRules = Array(customRules.prefix(max(1, customRules.count / 2)))
+                    .map { String($0.prefix(max(32, $0.count / 2))) }
+                changed = true
+            }
+            // Reduce all oversized optional sources in the same refit. This avoids serially
+            // tokenizing dozens of nearly identical payloads when several sources are long.
+            changed = Self.shorten(&clipboardContext, floor: 256) || changed
+            changed = Self.shorten(&extendedContext, floor: 256) || changed
+            changed = Self.shorten(&visualContextSummary, floor: 512) || changed
+            if surfaceFacts.reduce(0, { $0 + $1.count }) > 256 {
+                surfaceFacts = surfaceFacts.map { String($0.prefix(max(32, $0.count / 2))) }
+                changed = true
+            }
+            changed = Self.shorten(&languageInstruction, floor: 128) || changed
+            if applicationName.count > 128 { applicationName = String(applicationName.prefix(128)); changed = true }
+            if completionLengthInstruction.count > 256 {
+                completionLengthInstruction = String(completionLengthInstruction.prefix(256)); changed = true
+            }
+            return changed
+        }
+
+        private mutating func removeOptionalReference() -> Bool {
+            if !historyExamples.isEmpty { historyExamples = []; return true }
+            if !customRules.isEmpty { customRules = []; return true }
+            if clipboardContext != nil { clipboardContext = nil; return true }
+            if extendedContext != nil { extendedContext = nil; return true }
+            if visualContextSummary != nil { visualContextSummary = nil; return true }
+            if !surfaceFacts.isEmpty { surfaceFacts = []; return true }
+            if toneHint != nil { toneHint = nil; return true }
+            if languageInstruction != nil { languageInstruction = nil; return true }
+            if applicationName != "App" { applicationName = "App"; return true }
+            if !completionLengthInstruction.isEmpty { completionLengthInstruction = ""; return true }
+            return false
+        }
+
+        private static func shorten(_ value: inout String?, floor: Int) -> Bool {
+            guard let text = value, text.count > floor else { return false }
+            value = String(text.prefix(max(floor, text.count / 2)))
+            return true
+        }
+    }
+
+    /// Counts the exact fully rendered pair on every attempt. Modern callers inject Apple's token
+    /// counts; older systems use UTF-8 bytes as a conservative upper bound rather than chars/4,
+    /// which dangerously undercounts Chinese and other dense scripts. Cancellation is checked
+    /// after each asynchronous count before a fitting payload can reach session construction.
+    static func preparePayload(
+        for request: SuggestionRequest, contextSize: Int,
+        count: (Payload) async throws -> Int
+    ) async throws -> Payload {
+        let responseReserve = max(1, request.maxPredictionTokens)
+        guard contextSize > framingTokenReserve, contextSize - framingTokenReserve > responseReserve else {
+            throw BudgetError.cannotFit
+        }
+        let limit = contextSize - framingTokenReserve - responseReserve
+        var content = Content(request)
+        for _ in 0..<maximumBudgetRefits {
+            try Task.checkCancellation()
+            let payload = content.payload
+            let units = try await count(payload)
+            try Task.checkCancellation()
+            guard units >= 0 else { throw BudgetError.cannotFit }
+            if units <= limit { return payload }
+            guard content.shrink() else { throw BudgetError.cannotFit }
+        }
+        throw BudgetError.cannotFit
+    }
+
     /// Session instructions define the model's role and output contract.
     /// Apple documents that instructions have higher priority than the prompt itself, which makes
     /// them the right place to say "this is autocomplete, not chat."
@@ -22,6 +174,10 @@ enum FoundationModelPromptRenderer {
     /// short, positive, and concrete; the continuation example below carries the rest of the
     /// anti-drift signal.
     static func sessionInstructions(for request: SuggestionRequest) -> String {
+        sessionInstructions(for: Content(request))
+    }
+
+    private static func sessionInstructions(for request: Content) -> String {
         var lines = [
             "You complete partially-typed text. The user is the author; you produce the next "
                 + "few words they would type, in their voice.",
@@ -94,6 +250,10 @@ enum FoundationModelPromptRenderer {
     /// Foundation Models tends to behave more reliably when the prompt describes the immediate task
     /// and the stable rules live in session instructions instead of being mixed together.
     static func prompt(for request: SuggestionRequest) -> String {
+        prompt(for: Content(request))
+    }
+
+    private static func prompt(for request: Content) -> String {
         let prefixText = request.prefixText
 
         if prefixText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -104,12 +264,12 @@ enum FoundationModelPromptRenderer {
 
         var sections = [
             "Screen context:",
-            "User is on \(request.context.applicationName)."
+            "User is on \(request.applicationName)."
         ]
 
         // Per-app tone hint lives in the per-request prompt, not the session instructions, so it
         // can vary as the user switches apps without invalidating the cached instruction prefix.
-        if let toneHint = appToneHint(forBundleIdentifier: request.context.bundleIdentifier) {
+        if let toneHint = request.toneHint {
             sections.append(toneHint)
         }
 
@@ -117,19 +277,7 @@ enum FoundationModelPromptRenderer {
         // document, channel) and the web domain are the strongest on-topic cues available. Apple's
         // session cache holds instructions, not the per-request prompt, so per-app variance here
         // costs nothing.
-        if let surface = request.surfaceContext {
-            if let title = surface.windowTitle {
-                sections.append("The window is titled \"\(title)\".")
-            }
-            if let domain = surface.domain {
-                sections.append("The user is on \(domain).")
-            }
-            // Same fact the llama preface states; dropping it here made the two prompts disagree
-            // about what the field is for (the placeholder is often the only label a field has).
-            if let placeholder = surface.fieldPlaceholder {
-                sections.append("The text field is labeled \"\(placeholder)\".")
-            }
-        }
+        sections.append(contentsOf: request.surfaceFacts)
 
         if let summary = request.visualContextSummary,
            !summary.isEmpty {
@@ -165,7 +313,7 @@ enum FoundationModelPromptRenderer {
         // bound this string (it returns the full document tail from the caret), so we apply
         // `maxSuffixCharacters` here to keep a caret-at-top in a long document from pushing the
         // entire body through Apple's 4096-token shared context window.
-        let trailing = String(request.context.trailingText.prefix(request.maxSuffixCharacters))
+        let trailing = request.trailingText
         if !trailing.isEmpty {
             sections.append(contentsOf: [
                 "",

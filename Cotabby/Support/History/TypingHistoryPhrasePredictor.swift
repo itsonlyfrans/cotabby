@@ -44,20 +44,55 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
         let second: Int32
     }
 
-    /// Lowercased token -> id. Ids index `displayForms`.
+    /// One spelling choice per retained context/next-token transition. Counts still merge case
+    /// variants for confidence; the latest spelling in that particular context is the one inserted.
+    /// Interning spellings separately avoids retaining a String in every transition dictionary.
+    private struct Continuation: Sendable {
+        var count: Int32
+        var spellingID: Int32
+    }
+
+    /// A computed audit value owned by the caller, not retained predictor state. Named fields
+    /// keep the representation comparison readable without coupling callers to storage tables.
+    struct SpellingStorageComparison: Equatable, Sendable {
+        let previousBytes: Int
+        let currentBytes: Int
+        let transitions: Int
+        let extraSpellings: Int
+    }
+
+    /// Lowercased token -> id. Context matching remains case insensitive.
     private let vocabulary: [String: Int32]
-    /// The spelling to insert for each token, as the user last wrote it ("Senad", "POC").
+    /// Interned exact spellings shared by all transitions that use them ("Senad", "POC").
     private let displayForms: [String]
     /// Next-token counts for contexts seen at least `minimumCount` times.
-    private let continuations: [Context: [Int32: Int32]]
+    private let continuations: [Context: [Int32: Continuation]]
     /// Two-word fallback, kept only for pairs seen at least `backoffMinimumCount` times.
-    private let shortContinuations: [ShortContext: [Int32: Int32]]
+    private let shortContinuations: [ShortContext: [Int32: Continuation]]
 
     var contextCount: Int { continuations.count }
+
+    /// Deterministic representation comparison for memory audits. This counts occupied spelling
+    /// array slots and transition values, excluding dictionary capacity, keys, and String heap
+    /// allocations. It is a layout comparison, not a claim about process memory or heap size.
+    var spellingStorageComparison: SpellingStorageComparison {
+        let transitions = continuations.values.reduce(0) { $0 + $1.count }
+            + shortContinuations.values.reduce(0) { $0 + $1.count }
+        return SpellingStorageComparison(
+            previousBytes: vocabulary.count * MemoryLayout<String>.stride + transitions * MemoryLayout<Int32>.stride,
+            currentBytes: displayForms.count * MemoryLayout<String>.stride + transitions * MemoryLayout<Continuation>.stride,
+            transitions: transitions,
+            extraSpellings: displayForms.count - vocabulary.count
+        )
+    }
 
     init(records: [TypingHistoryRecord]) {
         var vocabulary: [String: Int32] = [:]
         var displayForms: [String] = []
+        var spellingIDs: [String: Int32] = [:]
+        // Occurrences need only one spelling ID. This small per-spelling map supplies folded
+        // identity during construction, avoiding a second Int32 for every word in the corpus.
+        var vocabularyIDs: [Int32] = []
         var sequences: [[Int32]] = []
         sequences.reserveCapacity(records.count)
         for record in records {
@@ -66,15 +101,15 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
             // caret never become the user's shortcuts.
             for token in Self.tokens(in: record.typedText) {
                 let key = token.lowercased()
-                if let id = vocabulary[key] {
-                    displayForms[Int(id)] = token
-                    ids.append(id)
-                } else {
-                    let id = Int32(displayForms.count)
-                    vocabulary[key] = id
+                let id = vocabulary[key] ?? Int32(vocabulary.count)
+                vocabulary[key] = id
+                let spellingID = spellingIDs[token] ?? Int32(displayForms.count)
+                if spellingIDs[token] == nil {
+                    spellingIDs[token] = spellingID
                     displayForms.append(token)
-                    ids.append(id)
+                    vocabularyIDs.append(id)
                 }
+                ids.append(spellingID)
             }
             sequences.append(ids)
         }
@@ -82,14 +117,20 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
         self.vocabulary = vocabulary
         self.displayForms = displayForms
         continuations = Self.continuationCounts(
-            in: sequences, contextLength: Self.contextLength, minimumCount: Self.minimumCount
+            in: sequences, vocabularyIDs: vocabularyIDs, contextLength: Self.contextLength, minimumCount: Self.minimumCount
         ) { ids, index in
-            Context(first: ids[index - 3], second: ids[index - 2], third: ids[index - 1])
+            Context(
+                first: vocabularyIDs[Int(ids[index - 3])],
+                second: vocabularyIDs[Int(ids[index - 2])],
+                third: vocabularyIDs[Int(ids[index - 1])]
+            )
         }
         shortContinuations = Self.continuationCounts(
-            in: sequences, contextLength: 2, minimumCount: Self.backoffMinimumCount
+            in: sequences, vocabularyIDs: vocabularyIDs, contextLength: 2, minimumCount: Self.backoffMinimumCount
         ) { ids, index in
-            ShortContext(first: ids[index - 2], second: ids[index - 1])
+            ShortContext(
+                first: vocabularyIDs[Int(ids[index - 2])], second: vocabularyIDs[Int(ids[index - 1])]
+            )
         }
     }
 
@@ -100,22 +141,29 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
     /// only for contexts frequent enough to ever produce a shortcut.
     private static func continuationCounts<Key: Hashable>(
         in sequences: [[Int32]],
+        vocabularyIDs: [Int32],
         contextLength: Int,
         minimumCount: Int32,
         context: ([Int32], Int) -> Key
-    ) -> [Key: [Int32: Int32]] {
+    ) -> [Key: [Int32: Continuation]] {
         var contextCounts: [Key: Int32] = [:]
         for ids in sequences where ids.count > contextLength {
             for index in contextLength..<ids.count {
                 contextCounts[context(ids, index), default: 0] += 1
             }
         }
-        var continuations: [Key: [Int32: Int32]] = [:]
+        var continuations: [Key: [Int32: Continuation]] = [:]
         for ids in sequences where ids.count > contextLength {
             for index in contextLength..<ids.count {
                 let key = context(ids, index)
                 guard let count = contextCounts[key], count >= minimumCount else { continue }
-                continuations[key, default: [:]][ids[index], default: 0] += 1
+                let spellingID = ids[index]
+                let tokenID = vocabularyIDs[Int(spellingID)]
+                var next = continuations[key, default: [:]][tokenID]
+                    ?? Continuation(count: 0, spellingID: spellingID)
+                next.count += 1
+                next.spellingID = spellingID
+                continuations[key, default: [:]][tokenID] = next
             }
         }
         return continuations
@@ -138,8 +186,8 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
         var isFirstStep = true
         while words < limits.maxWords {
             let prefixFilter = isFirstStep ? partial?.lowercased() : nil
-            guard let (nextID, count) = confidentNextToken(after: ids, prefix: prefixFilter) else { break }
-            let token = displayForms[Int(nextID)]
+            guard let (nextID, next) = confidentNextToken(after: ids, prefix: prefixFilter) else { break }
+            let token = displayForms[Int(next.spellingID)]
 
             if token == Self.newlineToken {
                 guard limits.allowsNewlines, !isFirstStep || partial == nil else { break }
@@ -158,7 +206,7 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
                 output += separator + token
                 words += 1
             }
-            weakestCount = min(weakestCount, count)
+            weakestCount = min(weakestCount, next.count)
             ids.append(nextID)
             isFirstStep = false
             if token.last.map({ ".!?".contains($0) }) == true { break }
@@ -191,7 +239,7 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
 
     /// The next token history is confident about (its id and count): from the three-word table
     /// when it knows the context, otherwise from the stricter two-word fallback.
-    private func confidentNextToken(after ids: [Int32], prefix: String?) -> (Int32, Int32)? {
+    private func confidentNextToken(after ids: [Int32], prefix: String?) -> (Int32, Continuation)? {
         let context = Context(first: ids[ids.count - 3], second: ids[ids.count - 2], third: ids[ids.count - 1])
         if let candidates = continuations[context] {
             return Self.confidentCandidate(
@@ -208,21 +256,21 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
     }
 
     private static func confidentCandidate(
-        in candidates: [Int32: Int32],
+        in candidates: [Int32: Continuation],
         displayForms: [String],
         prefix: String?,
         minimumCount: Int32,
         minimumShare: Double
-    ) -> (Int32, Int32)? {
+    ) -> (Int32, Continuation)? {
         let eligible = prefix.map { prefix in
-            candidates.filter { id, _ in
-                let form = displayForms[Int(id)].lowercased()
+            candidates.filter { _, next in
+                let form = displayForms[Int(next.spellingID)].lowercased()
                 return form != newlineToken && form.hasPrefix(prefix)
             }
         } ?? candidates
-        let total = eligible.values.reduce(0, +)
-        guard let best = eligible.max(by: { $0.value < $1.value }), total > 0,
-              best.value >= minimumCount, Double(best.value) / Double(total) >= minimumShare
+        let total = eligible.values.reduce(Int32(0)) { $0 + $1.count }
+        guard let best = eligible.max(by: { $0.value.count < $1.value.count }), total > 0,
+              best.value.count >= minimumCount, Double(best.value.count) / Double(total) >= minimumShare
         else { return nil }
         return (best.key, best.value)
     }

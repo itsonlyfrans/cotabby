@@ -5,7 +5,7 @@
   </a>
 </p>
 
-<h1 align="center">Cotabby [beta]</h1>
+<h1 align="center">Cotabby Fork [preview]</h1>
 
 <p align="center"><em>Open-source, local-first AI autocomplete for macOS.</em></p>
 
@@ -14,8 +14,8 @@
   <img width="200" alt="landing-page" src="https://github.com/user-attachments/assets/c28fbb4b-6dfb-4403-a040-1df61daf4df2" /></a>
 
 
-<a href="https://github.com/FuJacob/cotabby/releases/latest/download/Cotabby.dmg">
-<img width="200" alt="download" src="https://github.com/user-attachments/assets/d5cb4454-d2ab-41d3-9d36-171d44ebfc52" /></a>
+<a href="https://github.com/itsonlyfrans/cotabby/releases">
+<img width="200" alt="fork releases" src="https://github.com/user-attachments/assets/d5cb4454-d2ab-41d3-9d36-171d44ebfc52" /></a>
 
 
 <a href="https://ko-fi.com/cotabby" target="_blank">
@@ -23,20 +23,22 @@
 </a></p>
 
 <p align="center">
-  <a href="https://github.com/FuJacob/cotabby/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/FuJacob/cotabby/build.yml?branch=main" /></a>
+  <a href="https://github.com/itsonlyfrans/cotabby/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/itsonlyfrans/cotabby/build.yml?branch=improve-completions" /></a>
   <a href="LICENSE"><img alt="License: AGPL v3" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" /></a>
-  <a href="https://github.com/FuJacob/cotabby/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/FuJacob/cotabby" /></a>
-  <a href="https://github.com/FuJacob/cotabby/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/FuJacob/cotabby/total" /></a>
-  <a href="https://github.com/FuJacob/cotabby/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/FuJacob/cotabby?style=flat" /></a>
   <img alt="Swift" src="https://img.shields.io/badge/Swift-F05138?logo=swift&amp;logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey" />
 </p>
 
 <p align="center">
-  <sub>Cotabby is free and open-source — maintained by two students. If it's useful to you, please consider supporting Cotabby's future.</sub>
+  <sub>This independent fork builds on <a href="https://github.com/FuJacob/cotabby">FuJacob/Cotabby</a>. The support links above support the original project.</sub>
 </p>
 
 ---
+
+This fork adds explicit personal vocabulary, safer correction and history acceptance,
+and focused reliability improvements. It ships as **Cotabby Fork**, with separate
+settings and permissions and manual updates. Release preparation and current verification
+limits are documented in [RELEASING.md](RELEASING.md) and [work/FORK_ROADMAP.md](work/FORK_ROADMAP.md).
 
 ## What It Does
 
@@ -46,6 +48,8 @@ The default Apple Intelligence and Open Source engines run on your Mac. No accou
 required. An optional OpenAI-compatible engine can connect to a server you configure.
 
 ## Demo
+
+These are upstream feature demonstrations; they are not verification of every host in this fork.
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=p3TIgxQFQGE"><strong>Watch on YouTube →</strong></a>
@@ -139,18 +143,13 @@ For the full suggestion pipeline, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Compatibility:** macOS 14.0 or later. The Apple Intelligence engine needs macOS 26 or later on a supported Mac; on older systems, use the Open Source engine.
 
-### Homebrew
+Fork packages belong on [this fork's releases page](https://github.com/itsonlyfrans/cotabby/releases).
+Check the release status and validation notes before installing. While the first package is
+being prepared, build the **Cotabby Fork** scheme using [RELEASING.md](RELEASING.md).
+The app can coexist with upstream Cotabby, but run only one completion app at a time.
+Fork updates are manual; no upstream update feed or Homebrew tap is used.
 
-```sh
-brew tap FuJacob/cotabby
-brew install --cask cotabby
-```
-
-Upgrade later with `brew upgrade --cask cotabby`. The tap lives at [FuJacob/homebrew-cotabby](https://github.com/FuJacob/homebrew-cotabby).
-
-### Manual download
-
-Grab the latest release from [cotabby.app](https://cotabby.app) and drag Cotabby into your Applications folder.
+For the original project instead, see [upstream installation instructions](https://github.com/FuJacob/cotabby#install).
 
 ## Using Cotabby
 
@@ -177,8 +176,9 @@ Cotabby blocks generation, presentation, and insertion in password and other sec
 Requires Xcode and Command Line Tools. Apple Silicon is strongly recommended for local model performance. For setup, build, test, and contribution workflow details, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/FuJacob/cotabby.git Cotabby
+git clone https://github.com/itsonlyfrans/cotabby.git Cotabby
 cd Cotabby
+git switch improve-completions
 scripts/prepare_cotabby_workspace.sh
 open build/cotabby-dependencies/Cotabby.xcworkspace
 ```
