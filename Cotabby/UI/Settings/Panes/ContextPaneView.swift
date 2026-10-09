@@ -25,6 +25,8 @@ import SwiftUI
 /// can type a trailing space; `SuggestionRequestFactory` does the once-per-request trim instead.
 struct ContextPaneView: View {
     @ObservedObject var suggestionSettings: SuggestionSettingsModel
+    /// Owned by `CotabbyAppEnvironment`; drives the Typing History section.
+    @ObservedObject var typingHistory: TypingHistoryStore
 
     private static let previewEditorMinHeight: CGFloat = 132
     private static let extendedContextEditorMinHeight: CGFloat = 220
@@ -34,6 +36,7 @@ struct ContextPaneView: View {
             livePreviewSection
             extendedContextSection
             howThisIsUsedSection
+            TypingHistorySectionView(store: typingHistory)
         }
     }
 
@@ -67,12 +70,26 @@ struct ContextPaneView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Text("Nothing here is saved or shared; it only exercises the on-device model.")
+                Text(Self.livePreviewPrivacyNote(for: suggestionSettings.snapshot.selectedEngine))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .padding(.vertical, 6)
             .settingsItem(.contextLivePreview)
+        }
+    }
+
+    /// The preview drives the real pipeline, so its privacy note must follow the selected engine.
+    /// Apple Intelligence and Open Source keep the typed text on this Mac; a configured endpoint,
+    /// which may be on the LAN or the internet, receives it exactly as it would from any field.
+    /// Cotabby can only speak for itself: what the endpoint retains is that server's policy.
+    static func livePreviewPrivacyNote(for engine: SuggestionEngineKind) -> String {
+        switch engine {
+        case .appleIntelligence, .llamaOpenSource:
+            return "Nothing here is saved or shared; it only exercises the on-device model."
+        case .openAICompatible:
+            return "Cotabby doesn't save this text, but like any other field it's sent to your configured endpoint, "
+                + "which may keep it."
         }
     }
 
@@ -147,8 +164,8 @@ struct ContextPaneView: View {
                         "characters. Anything pasted beyond that is trimmed automatically."
                 )
                 bulletLine(
-                    "Stored locally on this Mac. Nothing is uploaded; this only feeds the " +
-                        "on-device model."
+                    "Stored locally on this Mac. Included in requests to your selected " +
+                        "engine, including a configured endpoint."
                 )
             }
             .font(.caption)

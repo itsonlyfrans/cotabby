@@ -1,255 +1,146 @@
-# Releasing Cotabby (Sparkle)
+# Releasing this Cotabby fork
 
-Short, practical guide to signing + releasing updates.
+The fork at `itsonlyfrans/cotabby` ships as **Cotabby Fork.app**, bundle identifier
+`com.itsonlyfrans.cotabby`. This is an installation distinction, not a new brand: it builds
+the same app sources and keeps Cotabby's icon. Its settings and Accessibility, Input Monitoring,
+and optional Screen Recording grants are separate from both upstream and `Cotabby Dev`.
+The approved dev identity remains unchanged. Do not replace `/Applications/Cotabby.app`.
 
----
+The `Cotabby Fork` target uses `CotabbyForkInfo.plist`, with automatic updates false and no
+Sparkle feed or signing key. `COTABBY_DEV` disables updater startup in Debug **and** Release;
+that flag currently changes only updater enablement. `COTABBY_FORK` selects the manual
+releases and source links shown in the menu and About pane. Updates are manual until a separately
+owned fork update channel is explicitly configured. A release must not use the upstream appcast,
+update signing key, Pages domain, or Homebrew tap. Repository checks prevent the upstream release
+and Pages jobs from running in this fork, including tag-triggered and manually dispatched runs.
 
-## Mental Model (keep this)
+## Build and package locally
 
-Two separate systems:
+Use an explicit version and monotonically increasing build number. Replace the example values
+when selecting a release; these commands do not assign a release tag or publish anything.
+Run serially in this checkout, after the relevant tests pass:
 
-1. **Apple signing (codesign + notarization)**
-   → lets macOS run your app
-
-2. **Sparkle signing (Ed25519)**
-   → lets your app trust updates
-
-Do not mix them.
-
----
-
-## Current Config
-
-- Feed: https://updates.cotabby.app/appcast.xml
-- Public key (`SUPublicEDKey`):
-  `efJeZNfUISOs6npbxI2MLLe7sBB5tT/sVnTk9t/qBSY=`
-
-Private key = secret. Never commit it.
-
----
-
-## One-Time Setup
-
-### Make Sparkle commands easy
-
-```sh
-mkdir -p ~/bin
-
-ln -sf "$(find ~/Library/Developer/Xcode/DerivedData -name generate_keys -type f | head -n 1)" ~/bin/sparkle-generate-keys
-ln -sf "$(find ~/Library/Developer/Xcode/DerivedData -name sign_update -type f | head -n 1)" ~/bin/sparkle-sign-update
-ln -sf "$(find ~/Library/Developer/Xcode/DerivedData -name generate_appcast -type f | head -n 1)" ~/bin/sparkle-generate-appcast
-
-echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+```bash
+xcodegen generate
+scripts/prepare_cotabby_workspace.sh
+xcodebuild archive \
+  -workspace build/cotabby-dependencies/Cotabby.xcworkspace \
+  -scheme "Cotabby Fork" -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -archivePath "build/fork-release/Cotabby Fork.xcarchive" \
+  -derivedDataPath build/DerivedData \
+  CODE_SIGNING_ALLOWED=NO \
+  MARKETING_VERSION=1.0.0 CURRENT_PROJECT_VERSION=1
+python3 scripts/package_fork_release.py \
+  --app-path "build/fork-release/Cotabby Fork.xcarchive/Products/Applications/Cotabby Fork.app" \
+  --validate-only
+python3 -m venv build/fork-release/venv
+build/fork-release/venv/bin/python3 -m pip install 'dmgbuild[badge_icons]==1.6.7'
+build/fork-release/venv/bin/python3 scripts/package_fork_release.py \
+  --app-path "build/fork-release/Cotabby Fork.xcarchive/Products/Applications/Cotabby Fork.app" \
+  --identity "Developer ID Application: Frans Emmanuel (KU6R499PHR)"
 ```
 
-Check:
-```sh
-which sparkle-generate-keys
+The package helper checks built metadata before making any signing changes. It copies the
+archive, signs nested code inside-out with hardened runtime and secure timestamps, verifies
+the fork's Developer ID team, and writes `build/fork-release/Cotabby-Fork.dmg`. The source archive
+is preserved. The ordinary local signer uses `--timestamp=none` and optional debugging/testing
+entitlements, so it is unsuitable for distribution. Packaging does not install, notarize,
+create update keys, or publish. It refuses to overwrite an existing DMG; retain a completed
+artifact in a versioned subdirectory with `--output-dir build/fork-release/<version>`.
+
+## Notarize and verify the artifact
+
+Developer ID signing alone is not a notarized release. Configure an owned `notarytool` keychain
+profile through Apple's supported credential flow; keep passwords/private keys out of commands,
+logs, notes, and this repository. The example profile name below contains no credential value.
+
+An existing signed-in Xcode account can also submit a **signed archive** without creating a
+`notarytool` profile. This path was verified locally for 1.0.0 (1). Build a separate archive
+with `CODE_SIGNING_ALLOWED=YES`, `CODE_SIGN_STYLE=Manual`, the owned Developer ID
+`CODE_SIGN_IDENTITY`, and `DEVELOPMENT_TEAM`. The unsigned archive above cannot pass Xcode's
+Developer ID export gate: the hardened-runtime flag must exist in its code signature.
+Export options use `method=developer-id`, `destination=upload`, `signingStyle=manual`, the
+owned team/certificate, `manageAppVersionAndBuildNumber=false`, and `uploadSymbols=false`.
+
+```bash
+xcodebuild -exportArchive \
+  -archivePath "build/fork-release/Cotabby Fork-signed.xcarchive" \
+  -exportOptionsPlist build/fork-release/ExportOptions-notarize.plist \
+  -exportPath build/fork-release/xcode-export-signed
+xcodebuild -exportNotarizedApp \
+  -archivePath "build/fork-release/Cotabby Fork-signed.xcarchive" \
+  -exportPath build/fork-release/notarized
+xcrun stapler validate "build/fork-release/notarized/Cotabby Fork.app"
+spctl --assess --type execute --verbose=2 "build/fork-release/notarized/Cotabby Fork.app"
+ditto -c -k --sequesterRsrc --keepParent \
+  "build/fork-release/notarized/Cotabby Fork.app" \
+  build/fork-release/Cotabby-Fork-1.0.0.zip
 ```
 
----
+Upload success alone is not notarization acceptance. Require successful notarized export,
+ticket validation, deep/strict signature verification, and Gatekeeper acceptance, then repeat
+those checks on a fresh ZIP extraction. Do not re-sign the exported app or pass it through
+`package_fork_release.py`, which would replace its notarized signature. The verified ZIP
+preserves the stapled app; it does not establish notarization of an earlier DMG container.
 
-## Sparkle Key
+For the separately signed **DMG** route, submit that container itself with `notarytool`:
 
-### Generate (once)
-```sh
-sparkle-generate-keys
+```bash
+xcrun notarytool submit build/fork-release/Cotabby-Fork.dmg \
+  --keychain-profile cotabby-fork-notary --wait --timeout 60m
+xcrun stapler staple build/fork-release/Cotabby-Fork.dmg
+xcrun stapler validate build/fork-release/Cotabby-Fork.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 \
+  build/fork-release/Cotabby-Fork.dmg
+shasum -a 256 build/fork-release/Cotabby-Fork.dmg
 ```
 
-### Print public key
-```sh
-sparkle-generate-keys -p
-```
+Require Apple's **Accepted** result before stapling. Mount the resulting DMG read-only, verify
+the packaged app with `codesign --verify --deep --strict`, check its bundle/version/update
+metadata with `package_fork_release.py --validate-only`, and assess it with
+`spctl --assess --type execute --verbose=2`. Verify the exact packaged app on the supported Mac
+architectures and OS versions being claimed. Confirm its separate settings/permissions identity,
+updater-off state, startup, completion, Tab acceptance, and non-secure-field gating. Granting
+permissions to the dev build does not establish the fork build's grants. Quit competing Cotabby
+instances during this check to avoid two global input monitors.
 
-Must match `SUPublicEDKey`.
+## Publication checklist
 
-### Backup private key
-```sh
-sparkle-generate-keys -x ~/secure/Cotabby-key.txt
-```
+- Relevant source tests and Release build pass; record actual checks and limitations.
+- Built fork metadata, Developer ID signature, notarization acceptance, staple, and Gatekeeper
+  assessment pass for the final DMG or the stapled app extracted from the final ZIP.
+  Record SHA-256 after packaging/stapling.
+- Exact packaged app passes runtime checks. Confirm universal slices with `lipo -archs` before
+  claiming Intel and Apple silicon support.
+- Select version, build number, release tag, and draft notes. Keep the release private/draft until
+  the final artifact and limitations are reviewable. Publish only to `itsonlyfrans/cotabby`.
+- No appcast, upstream Pages deployment, or upstream Homebrew dispatch accompanies this fork release.
+- Preserve the distributable under `build/fork-release`; remove `build/DerivedData` and verify cleanup
+  once validation is complete. Keep temporary notarization/signing credentials out of tracked files.
 
-### Import on another machine
-```sh
-sparkle-generate-keys -f ~/secure/Cotabby-key.txt
-```
+Repository Actions secrets were absent at preparation time. Local signing can use an existing
+Developer ID identity, but notarization authorization and an actual accepted artifact must be
+verified separately. The isolated target and scripts alone are release preparation, not release
+completion. Draft notes and current handoff state live in `work/fork-release.md`.
 
----
+## Upstream release path
 
-## Release Flow (every release)
+In `FuJacob/cotabby` only, the upstream Release workflow remains the distribution entry point: push a `v<version>` tag,
+or dispatch it with `release_version` and `publish: false` to validate packaging without publishing.
+It builds the production `Cotabby` scheme, signs with the configured upstream credentials,
+notarizes and staples the DMG, then publishes the signed Sparkle appcast, GitHub release, Pages
+site, and Homebrew cask update when publication is enabled.
 
-### 1. Sign app (Apple)
-```sh
-codesign --force --deep --options runtime \
---sign "Developer ID Application: Jacob Fu (G946M8K23B)" \
-./Cotabby.app
-```
+Upstream's existing secret names, environments, appcast signing key, update feed, bundle identifier,
+and tag-derived version / workflow-run build number remain unchanged. `Cotabby Dev` uses its
+own identity and disables Sparkle in every build configuration.
 
-### 2. Notarize
-```sh
-ditto -c -k --keepParent ./Cotabby.app Cotabby.zip
-xcrun notarytool submit Cotabby.zip --keychain-profile "AC_PASSWORD" --wait
-xcrun stapler staple ./Cotabby.app
-```
+The build stage first runs `scripts/prepare_cotabby_workspace.sh` to supply the pending
+CotabbyInference APIs. This is the only native dependency preparation added to the release flow;
+all functional app changes compile against the same package and patch as local builds and tests.
+Once those APIs land upstream, the workspace override can be retired together with the patch.
+Do not remove the patch before a compatible package revision is available.
 
----
-
-### 3. Create the styled DMG
-
-The release pipeline now builds a styled installer DMG through:
-
-```sh
-python3 -m pip install "dmgbuild[badge_icons]==1.6.7"
-python3 scripts/build_release_dmg.py \
-  --app-path /path/to/Cotabby.app \
-  --output-path /path/to/Cotabby.dmg \
-  --background-path assets/release/dmg_background.png \
-  --background-2x-path assets/release/dmg_background@2x.png \
-  --volume-name Cotabby
-```
-
-What this does:
-- packages `Cotabby.app` with an `Applications` shortcut
-- applies the committed background art from `assets/release/dmg_background.png`
-- locks the icon layout for the drag-to-Applications flow
-- reuses the app bundle icon as a best-effort mounted-volume badge when available
-
----
-
-### 4. Sign update (Sparkle)
-```sh
-sparkle-sign-update /path/to/Cotabby.dmg
-```
-
----
-
-### 5. Generate appcast
-```sh
-python3 scripts/generate_appcast.py \
-  --release-version 1.0.0 \
-  --build-number 100 \
-  --archive /path/to/Cotabby.dmg \
-  --output build/appcast.xml \
-  --ed-key-file ~/secure/Cotabby-key.txt
-```
-
-On your Mac, `--ed-key-file` is optional if the key is already in Keychain.
-In GitHub Actions, we pass the key file explicitly from the `SPARKLE_ED25519_PRIVATE_KEY` secret.
-
----
-
-## GitHub Actions Release
-
-Workflow:
-`.github/workflows/release.yml`
-
-Trigger:
-- Push a tag like `v0.0.2-beta` or `v1.0.0`
-- Or run manually with `workflow_dispatch` for validation
-
-### Tag naming and pre-release behavior
-
-Tags with a hyphen suffix (e.g., `v0.0.1-beta`, `v1.0.0-rc1`) are automatically
-marked as **Pre-release** on the GitHub Releases page. This means they won't
-become the "Latest" release.
-
-- **Beta/RC release**: `git tag v0.0.2-beta && git push origin v0.0.2-beta`
-- **Stable release**: `git tag v1.0.0 && git push origin v1.0.0`
-
-To promote a pre-release to Latest without re-running the pipeline:
-```sh
-gh release edit v0.0.1-beta --prerelease=false --latest
-```
-
-To re-release the same tag on a newer commit (e.g., hotfix):
-```sh
-gh release delete v0.0.1-beta --yes            # delete the GitHub Release
-git push origin :refs/tags/v0.0.1-beta          # delete remote tag
-git tag -f v0.0.1-beta                          # re-tag at current HEAD
-git push origin v0.0.1-beta                     # push triggers pipeline
-```
-
-Required repo secrets:
-- `APPLE_ID`
-- `APPLE_TEAM_ID`
-- `APPLE_APP_SPECIFIC_PASSWORD`
-- `DEVELOPER_ID_APPLICATION_CERT`
-- `DEVELOPER_ID_CERT_PASSWORD`
-- `SPARKLE_ED25519_PRIVATE_KEY`
-
-What CI does:
-1. Imports the Developer ID certificate into a temporary keychain.
-2. Installs the pinned `dmgbuild[badge_icons]` dependency.
-3. Archives a Release build.
-4. Packages a styled `Cotabby.dmg` with `scripts/build_release_dmg.py`.
-5. Sends the DMG to Apple notarization.
-6. Staples and validates the notarization ticket.
-7. Verifies the Sparkle private key matches `SUPublicEDKey`.
-8. Signs the final DMG with Sparkle.
-9. Creates a GitHub Release with `Cotabby.dmg`.
-10. Publishes `appcast.xml` to GitHub Pages last.
-
-Pages output:
-- `/appcast.xml`
-
-The `/appcast.xml` path matches the current feed URL (`https://updates.cotabby.app/appcast.xml`).
-
----
-
-## Sanity Checks
-
-Check Apple signing:
-```sh
-spctl -a -t exec -vv ./Cotabby.app
-```
-
-Check Sparkle signature:
-```sh
-sparkle-sign-update /path/to/Cotabby.dmg
-```
-
-Signature must match appcast.
-
-Check installer layout locally:
-```sh
-hdiutil attach /path/to/Cotabby.dmg
-```
-
-Verify the mounted image opens in icon view, shows the committed background
-art, places `Cotabby.app` above the arrows, and places the `Applications` shortcut
-inside the dashed drop target. The mounted volume badge is best-effort; do not
-fail a release if the window layout is correct but Finder falls back to the
-default disk icon.
-
----
-
-## Rules (important)
-
-- Never lose Sparkle private key → breaks updates
-- Never rotate key casually → old installs will reject updates
-- Never commit private key
-- Always sign AFTER final DMG is built (no changes after)
-- Always publish appcast AFTER the GitHub Release asset exists
-
----
-
-## Rollback
-
-Sparkle follows the appcast, not the GitHub Releases page.
-
-To rollback:
-1. Find the previous successful release run.
-2. Restore that run's `appcast.xml`.
-3. Redeploy it to GitHub Pages.
-4. Leave the bad GitHub Release alone unless there is a security reason to remove it.
-
----
-
-## If something breaks
-
-Common issues:
-- Wrong Sparkle key → updates rejected
-- DMG changed after signing → signature invalid
-- Missing notarization → macOS blocks app
-
-Fix those first.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local builds and evaluations. Historical CoHamster
+release notes describe past fork binaries and do not control Cotabby's release configuration.

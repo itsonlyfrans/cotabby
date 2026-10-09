@@ -33,11 +33,16 @@ enum SuggestionSessionReconciler {
         _ typedCharacters: String,
         session: ActiveSuggestionSession
     ) -> ActiveSuggestionSession? {
-        guard typedCharacters.isDirectTextMutation else {
+        // A correction replaces an existing word; matching its first letters is not acceptance
+        // of an append-only tail. Only continuations can advance optimistically from key events.
+        guard !session.kind.isCorrection, typedCharacters.isDirectTextMutation else {
             return nil
         }
 
-        guard session.remainingText.hasPrefix(typedCharacters) else {
+        // User-authored input is allowed to cross the visible offer's boundary. Unlike Tab, typing
+        // those characters does not accept anything unseen; it confirms more of the prediction and
+        // should keep the following words ready instead of throwing away the session.
+        guard session.predictedRemainingText.hasPrefix(typedCharacters) else {
             return nil
         }
 
@@ -49,14 +54,14 @@ enum SuggestionSessionReconciler {
     static func reconcile(
         session: ActiveSuggestionSession,
         with liveContext: FocusedInputContext,
-        pendingInsertionConsumedCount: Int?
+        pendingInsertionConsumedCount: Int?,
+        pendingTypedConsumedRange: Range<Int>? = nil
     ) -> SuggestionSessionReconciliation {
         let isAwaitingInsertedTextSync = pendingInsertionConsumedCount == session.consumedCharacterCount
 
-        // Process-level identity check instead of AX element identity. Chrome recycles AX
-        // node tokens between polls, making CFHash-based elementIdentifier unstable. The text
-        // guards below catch intra-process field switches via content divergence.
-        guard liveContext.processIdentifier == session.baseContext.processIdentifier else {
+        // Text may be identical in two conversations. Validate the writing session before even
+        // the post-insertion AX-lag tolerance, which must never authorize a different target.
+        guard liveContext.sessionIdentity == session.baseContext.sessionIdentity else {
             return .invalid("Overlay hidden because the focused field changed.")
         }
 
@@ -83,7 +88,9 @@ enum SuggestionSessionReconciler {
         }
 
         var nextPendingInsertionConsumedCount = pendingInsertionConsumedCount
-        let consumedSuffix = String(liveContext.precedingText.dropFirst(session.baseContext.precedingText.count))
+        let consumedSuffix = String(
+            Self.spaceNormalized(liveContext.precedingText).dropFirst(session.baseContext.precedingText.count)
+        )
         if let consumedTextReconciliation = reconcileConsumedSuggestionText(
             session: session,
             consumedSuffix: consumedSuffix,
@@ -100,6 +107,18 @@ enum SuggestionSessionReconciler {
         }
 
         guard consumedSuffix.count >= session.consumedCharacterCount else {
+            // The tap observes a matching character before the host handles it. A stale AX prefix
+            // is therefore expected until that character publishes. Unlike synthetic insertion,
+            // ordinary typing never excuses a changed prefix, suffix, selection, or focus event:
+            // all those guards have already passed before this narrowly scoped tolerance applies.
+            if pendingTypedConsumedRange?.upperBound == session.consumedCharacterCount,
+               pendingTypedConsumedRange?.contains(consumedSuffix.count) == true,
+               liveContext.focusChangeSequence == session.baseContext.focusChangeSequence {
+                return tolerateTransientPostInsertionLag(
+                    session: session,
+                    pendingInsertionConsumedCount: pendingInsertionConsumedCount
+                )
+            }
             // Same AX lag protection: if we just Tab-inserted, the preceding text hasn't updated yet.
             if isAwaitingInsertedTextSync {
                 return tolerateTransientPostInsertionLag(
@@ -148,13 +167,23 @@ enum SuggestionSessionReconciler {
         )
     }
 
+    /// Text with every non-breaking space read as a plain space. Chromium's contenteditable stores
+    /// a space typed at the end of a line as U+00A0 and turns it back into U+0020 once the next
+    /// character arrives (measured live in Chrome: typing the space the ghost suggested read as
+    /// "typed text diverged", and the next letter as "text no longer matches the anchor"). Both
+    /// forms are the same keystroke to the user, so every comparison here treats them alike;
+    /// the two are one UTF-16 unit each, so offsets are unchanged.
+    static func spaceNormalized(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
     private static func reconcileTrailingText(
         session: ActiveSuggestionSession,
         liveContext: FocusedInputContext,
         pendingInsertionConsumedCount: Int?,
         isAwaitingInsertedTextSync: Bool
     ) -> SuggestionSessionReconciliation? {
-        guard liveContext.trailingText != session.baseContext.trailingText else {
+        guard spaceNormalized(liveContext.trailingText) != spaceNormalized(session.baseContext.trailingText) else {
             return nil
         }
 
@@ -162,14 +191,16 @@ enum SuggestionSessionReconciler {
         // text snapshot catches up. Right after Tab insertion that makes the trailing-text slice
         // look changed even though the active suggestion tail is still valid.
         if isAwaitingInsertedTextSync,
-           liveContext.precedingText.hasPrefix(session.baseContext.precedingText) {
+           spaceNormalized(liveContext.precedingText).hasPrefix(spaceNormalized(session.baseContext.precedingText)) {
             return tolerateTransientPostInsertionLag(
                 session: session,
                 pendingInsertionConsumedCount: pendingInsertionConsumedCount
             )
         }
 
-        return .invalid("Overlay hidden because text after the caret changed.")
+        let before = (session.baseContext.trailingText as NSString).length
+        let after = (liveContext.trailingText as NSString).length
+        return .invalid("Overlay hidden because text after the caret changed (\(before) -> \(after) chars).")
     }
 
     private static func reconcilePrefixAnchor(
@@ -178,7 +209,7 @@ enum SuggestionSessionReconciler {
         pendingInsertionConsumedCount: Int?,
         isAwaitingInsertedTextSync: Bool
     ) -> SuggestionSessionReconciliation? {
-        guard !liveContext.precedingText.hasPrefix(session.baseContext.precedingText) else {
+        guard !spaceNormalized(liveContext.precedingText).hasPrefix(spaceNormalized(session.baseContext.precedingText)) else {
             return nil
         }
 
@@ -201,7 +232,7 @@ enum SuggestionSessionReconciler {
         pendingInsertionConsumedCount: Int?,
         isAwaitingInsertedTextSync: Bool
     ) -> SuggestionSessionReconciliation? {
-        guard !session.fullText.hasPrefix(consumedSuffix) else {
+        guard !spaceNormalized(session.fullText).hasPrefix(consumedSuffix) else {
             return nil
         }
 
@@ -280,7 +311,40 @@ enum SuggestionSessionReconciler {
             index = wordEnd
         }
 
+        // A token with no word in it (". I'll", ", and") is punctuation the model attached to the
+        // previous word; on its own it is not worth a keypress, so it binds to the word that
+        // follows and one Tab accepts ". I'll". With trailing punctuation set to accept separately
+        // the user has asked for punctuation as its own step, so the token stays alone.
+        if autoAcceptTrailingPunctuation, tokenStart < index,
+           let bound = wordBoundToLeadingPunctuation(in: remainingText, punctuation: tokenStart..<index) {
+            index = bound
+        }
+
         return String(remainingText[..<index])
+    }
+
+    /// The end of the whitespace-delimited word after a punctuation-only token, or nil when the
+    /// token holds a word character, belongs to a space-less script, or nothing word-like follows.
+    private static func wordBoundToLeadingPunctuation(
+        in text: String,
+        punctuation: Range<String.Index>
+    ) -> String.Index? {
+        let first = text[punctuation.lowerBound]
+        guard !text[punctuation].contains(where: \.isAcceptanceWordCharacter),
+              !first.beginsSpacelessScriptWord, !first.bindsToPrecedingSpacelessWord, !first.isCJKOpeningBracket
+        else { return nil }
+        var next = punctuation.upperBound
+        while next < text.endIndex, text[next].isWhitespace {
+            next = text.index(after: next)
+        }
+        let wordStart = next
+        while next < text.endIndex, !text[next].isWhitespace {
+            next = text.index(after: next)
+        }
+        guard wordStart < next, text[wordStart..<next].contains(where: \.isAcceptanceWordCharacter),
+              !text[wordStart].beginsSpacelessScriptWord
+        else { return nil }
+        return next
     }
 
     /// The index just past the first ICU word in `text[from..<limit]`, or nil when segmentation finds
@@ -463,10 +527,10 @@ enum SuggestionSessionReconciler {
     /// separating space themselves after the ghost appeared, or because AX reported the prefix before
     /// that space landed.
     ///
-    /// We deliberately do NOT synthesize a word boundary. The base-model prompt ends at a clean
-    /// boundary (`BaseCompletionPromptRenderer` trims trailing whitespace), so the model's first token
-    /// already encodes intent: a leading space means "new word", none means "continue the current
-    /// word". Honoring that is what makes a mid-word completion like "after" + "noon" land as
+    /// We deliberately do NOT synthesize a word boundary. The base-model prompt preserves the exact
+    /// caret prefix, so generation continues from the boundary the user actually typed. When that
+    /// prefix has no trailing whitespace, a leading model space means "new word", while its absence
+    /// means "continue the current word". Honoring that makes "after" + "noon" land as
     /// "afternoon" instead of "after noon", while a genuine new word arrives with the model's own
     /// leading space already attached to the first acceptance chunk (`nextAcceptanceChunk` keeps it).
     /// The cost of trusting the model is that when it omits a space it should have emitted, the words
@@ -587,12 +651,27 @@ enum SuggestionSessionReconciler {
 
     /// The overlay may be hidden briefly while waiting for the host app to publish an updated
     /// caret position, so hidden does not automatically mean "reject Tab."
-    static func overlayAllowsAcceptance(of text: String, overlayState: OverlayState) -> Bool {
+    ///
+    /// `heldPresentationText` is the text the overlay controller was last asked to show but is
+    /// still holding off screen (a pixel caret read in flight, or a caret that lags the host's
+    /// published text; see `SuggestionOverlayControlling.heldPresentationText`). While a present is
+    /// held, `overlayState` still describes the *previous* presentation, so after a Tab accept it
+    /// names the tail as it was before that accept. A rapid follow-up Tab then compared the new
+    /// tail with the old one, failed, and passed through: the session was torn down and the host
+    /// received a real Tab, moving focus to the page's next control. The held text is the offer
+    /// Cotabby itself is committed to painting for this exact session, so it authorizes acceptance
+    /// just as a painted ghost does. Any other mismatch still rejects: a visible ghost that is
+    /// neither the tail nor its pending replacement is stale UI, not something the user was offered.
+    static func overlayAllowsAcceptance(
+        of text: String,
+        overlayState: OverlayState,
+        heldPresentationText: String? = nil
+    ) -> Bool {
         guard case let .visible(visibleText, _, _) = overlayState else {
             return true
         }
 
-        return visibleText == text
+        return visibleText == text || heldPresentationText == text
     }
 }
 

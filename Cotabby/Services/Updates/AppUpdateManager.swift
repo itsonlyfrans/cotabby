@@ -8,9 +8,35 @@ import Sparkle
 /// framework that talks to the network, persists updater preferences, and may present system UI.
 ///
 /// We keep it in `Services/` so the rest of the app only depends on a tiny, explicit surface:
-/// `start()` for lifecycle wiring and `checkForUpdates()` for a future settings screen.
+/// `start()` for lifecycle wiring, `checkForUpdates()` for Sparkle, and build capabilities for UI.
+/// Fork views get a manual releases destination here instead of deciding update policy themselves;
+/// returning a URL performs no network request. SwiftUI opens it only when the user clicks a Link.
 @MainActor
 final class AppUpdateManager {
+    /// The composition root owns one manager for the app lifetime. Views read this build capability
+    /// to avoid offering an automatic update action in development or separately distributed forks.
+    var supportsAutomaticUpdates: Bool { Self.isUpdaterEnabledForThisBuild }
+
+    /// A separate build flag distinguishes the distributable fork from local development. Both
+    /// disable Sparkle, but only the fork has a public manual installation destination.
+    var manualReleasesURL: URL? {
+        #if COTABBY_FORK
+        URL(string: "https://github.com/itsonlyfrans/cotabby/releases")
+        #else
+        nil
+        #endif
+    }
+
+    /// Source identity follows the built implementation, while support and wiki attribution stay
+    /// with their respective owners. Keeping this beside update policy avoids repo checks in views.
+    var sourceRepositoryURL: URL? {
+        #if COTABBY_FORK
+        URL(string: "https://github.com/itsonlyfrans/cotabby")
+        #else
+        URL(string: "https://github.com/FuJacob/Cotabby")
+        #endif
+    }
+
     /// The updater is created once and retained for the lifetime of the process, just like the
     /// runtime manager and the focus tracker. Sparkle expects its controller to stay alive.
     private let updaterController: SPUStandardUpdaterController
@@ -46,10 +72,9 @@ final class AppUpdateManager {
         guard Self.isUpdaterEnabledForThisBuild else {
             // Dev builds carry a distinct bundle identifier (`com.jacobfu.tabby.dev`) so they hold
             // their own Accessibility/TCC grant, independent of the released app. Sparkle must never
-            // run here: the prod appcast points at the Developer ID-signed release, and letting it
-            // install would swap that bundle in over the dev app, collapsing the separate identity
-            // this build exists to preserve.
-            log("Sparkle disabled for dev build.")
+            // run here or in the distributable fork: the prod appcast points at the upstream
+            // release, and installing it would replace this separate app/settings identity.
+            log("Sparkle disabled for this build.")
             return
         }
 
@@ -93,11 +118,10 @@ final class AppUpdateManager {
         updaterController.checkForUpdates(nil)
     }
 
-    /// Whether Sparkle should run for this build. Compiled out to `false` in the dev configuration
-    /// (the `COTABBY_DEV` flag), which ships under a distinct bundle identifier that the prod appcast
-    /// must never replace. Released builds resolve to `true` and follow the normal update path.
+    /// Whether Sparkle should run for this build. Dev and fork identities must never be replaced
+    /// by the upstream appcast. Upstream release builds keep the normal automatic update path.
     private static var isUpdaterEnabledForThisBuild: Bool {
-        #if COTABBY_DEV
+        #if COTABBY_DEV || COTABBY_FORK
         false
         #else
         true

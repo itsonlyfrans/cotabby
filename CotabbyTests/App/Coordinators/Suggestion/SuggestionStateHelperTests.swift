@@ -286,7 +286,7 @@ final class SuggestionInteractionStateTests: XCTestCase {
             }
             XCTAssertEqual(session.remainingText, " again")
             XCTAssertEqual(state.activeSession?.remainingText, " again")
-            XCTAssertNotNil(advancement)
+            XCTAssertEqual(advancement?.stage, "session-reconciled")
         }
     }
 
@@ -310,6 +310,44 @@ final class SuggestionInteractionStateTests: XCTestCase {
             )
             XCTAssertEqual(advanced?.remainingText, " again")
             XCTAssertEqual(state.activeSession?.remainingText, " again")
+        }
+    }
+
+    func test_typedThroughAdvanceSurvivesTheHostsAccessibilityLag() {
+        // The key event advances the session before the host publishes the character. A poll that
+        // still shows the old text must not kill the session (it read as "partially undone" in the
+        // Claude composer); the one that carries the character clears the sentinel.
+        runOnMainActor {
+            let state = makeState()
+            let context = CotabbyTestFixtures.focusedInputContext(precedingText: "Hello")
+            let storedSession = state.startSession(fullText: " world again", liveContext: context, latency: 0.1)
+            XCTAssertNotNil(state.advanceIfTypedCharactersMatch(" wor", expectedSession: storedSession))
+            XCTAssertTrue(state.isAwaitingPostInsertionSync)
+
+            let lagging = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Hello w")
+            guard case .valid(_, let survived, _)? = state.reconcileActiveSession(with: lagging) else {
+                return XCTFail("A snapshot behind the typed characters must be tolerated")
+            }
+            XCTAssertEqual(survived.remainingText, "ld again")
+            XCTAssertTrue(state.isAwaitingPostInsertionSync)
+
+            let caughtUp = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Hello wor")
+            guard case .valid(_, let current, _)? = state.reconcileActiveSession(with: caughtUp) else {
+                return XCTFail("The published text matches the session")
+            }
+            XCTAssertEqual(current.remainingText, "ld again")
+            XCTAssertFalse(state.isAwaitingPostInsertionSync, "AX caught up: the sentinel clears")
+        }
+    }
+
+    func test_typingThroughTheWholeSuggestionArmsNoSentinel() {
+        runOnMainActor {
+            let state = makeState()
+            let context = CotabbyTestFixtures.focusedInputContext(precedingText: "Hello")
+            let storedSession = state.startSession(fullText: " world", liveContext: context, latency: 0.1)
+            let exhausted = state.advanceIfTypedCharactersMatch(" world", expectedSession: storedSession)
+            XCTAssertEqual(exhausted?.isExhausted, true)
+            XCTAssertFalse(state.isAwaitingPostInsertionSync)
         }
     }
 
@@ -551,7 +589,7 @@ final class SuggestionCaretPredictionTests: XCTestCase {
         }
     }
 
-    func test_predictedCaretRectStillMovesForwardForEstimatedGeometry() {
+    func test_predictedCaretRectAppliesTheBiasedConservativeShiftForEstimatedGeometry() {
         runOnMainActor {
             let oldRect = CGRect(x: 10, y: 20, width: 2, height: 18)
 
@@ -562,8 +600,39 @@ final class SuggestionCaretPredictionTests: XCTestCase {
                 observedCharWidth: 7
             )
 
-            XCTAssertGreaterThan(predicted.origin.x, oldRect.origin.x)
+            // Coarse AXFrame geometry scales the measured 28pt by 0.91 and the 1.5 upward bias
+            // (38.22pt), which sits between the 21pt floor and the 78pt per-character cap.
+            XCTAssertEqual(predicted.origin.x, 48.22, accuracy: 0.001)
             XCTAssertEqual(predicted.origin.y, oldRect.origin.y)
+            XCTAssertEqual(predicted.size, oldRect.size)
+        }
+    }
+
+    func test_predictedCaretRectFloorsTinyEstimatedShifts() {
+        runOnMainActor {
+            let predicted = SuggestionCoordinator.predictedCaretRect(
+                after: "a",
+                oldCaretRect: CGRect(x: 10, y: 20, width: 2, height: 18),
+                caretQuality: .estimated,
+                observedCharWidth: 2
+            )
+
+            // 2pt * 0.91 * 1.5 is below the 14pt * 1.5 floor, so the floor wins.
+            XCTAssertEqual(predicted.origin.x, 31, accuracy: 0.001)
+        }
+    }
+
+    func test_predictedCaretRectShiftsLeftForRightToLeftText() {
+        runOnMainActor {
+            let predicted = SuggestionCoordinator.predictedCaretRect(
+                after: "abcd",
+                oldCaretRect: CGRect(x: 100, y: 20, width: 2, height: 18),
+                caretQuality: .exact,
+                observedCharWidth: 7,
+                isRightToLeft: true
+            )
+
+            XCTAssertEqual(predicted.origin.x, 72)
         }
     }
 }
@@ -576,7 +645,6 @@ private final class FakeOverlayController: SuggestionOverlayControlling {
     private(set) var showCallCount = 0
     private(set) var lastShownText: String?
     private(set) var lastShownCaretRect: CGRect?
-    private(set) var lastShownGeometry: SuggestionOverlayGeometry?
     private(set) var hideReasons: [String] = []
 
     init(initialState: OverlayState = .hidden(reason: "Overlay idle.")) {
@@ -590,10 +658,8 @@ private final class FakeOverlayController: SuggestionOverlayControlling {
         showCallCount += 1
         lastShownText = text
         lastShownCaretRect = geometry.caretRect
-        lastShownGeometry = geometry
-        // The fake does not run the production policy; it just records the call. Defaulting to
-        // inline keeps existing tests unchanged. Mirror-aware tests inject explicit state via
-        // `initialState:`.
+        // The fake does not run the production render policy; it records the call and reports an
+        // inline panel. Tests that need a specific prior state inject it via `initialState:`.
         state = .visible(text: text, geometry: geometry, mode: .inline)
         onStateChange?(state)
     }

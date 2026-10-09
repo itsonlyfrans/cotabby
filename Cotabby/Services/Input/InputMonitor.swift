@@ -19,11 +19,14 @@ struct InputMonitorKeyEvent {
     let keyCode: CGKeyCode
     let characters: String
     let flags: CGEventFlags
+    /// Mirrors `kCGKeyboardEventAutorepeat`: the key is being held, not pressed again.
+    let isAutorepeat: Bool
 
-    init(keyCode: CGKeyCode, characters: String = "", flags: CGEventFlags = []) {
+    init(keyCode: CGKeyCode, characters: String = "", flags: CGEventFlags = [], isAutorepeat: Bool = false) {
         self.keyCode = keyCode
         self.characters = characters
         self.flags = flags
+        self.isAutorepeat = isAutorepeat
     }
 }
 
@@ -563,7 +566,13 @@ final class InputMonitor {
                 return Unmanaged.passUnretained(event)
             }
 
-            let keyEvent = InputMonitorKeyEvent(keyCode: keyCode(from: event), flags: event.flags)
+            // Holding Accept Word repeats its key-down. The flag lets double-tap recognition treat
+            // those repeats as one long press instead of a second tap.
+            let keyEvent = InputMonitorKeyEvent(
+                keyCode: keyCode(from: event),
+                flags: event.flags,
+                isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            )
             switch resolveAcceptKeyDown(keyEvent) {
             case .consume:
                 return nil
@@ -622,7 +631,8 @@ final class InputMonitor {
             kind: kind,
             keyCode: keyEvent.keyCode,
             characters: "",
-            flags: keyEvent.flags
+            flags: keyEvent.flags,
+            isAutorepeat: keyEvent.isAutorepeat
         )
         guard onEvent(capturedEvent) else {
             CotabbyLogger.app.debug(
@@ -648,6 +658,22 @@ final class InputMonitor {
         // "first look at every keystroke" invariant intact even when a suggestion overlay is showing.
         let recognizesAcceptance = isAcceptTapOwningAcceptKeys && !captureInterceptionActive
         let capturedEvent = classify(keyEvent: keyEvent, recognizesAcceptance: recognizesAcceptance)
+        // Trace-level so it is free at the default floor; under `-cotabby-debug` every observed key
+        // lands in the JSONL stream, which is how a "why did the ghost vanish" report gets answered.
+        // Metadata only: this monitor sees every field, secure ones included, and the secure-field
+        // gate runs later in the coordinator, so neither the characters nor a printable key's code
+        // (which names the character just as well) may reach the on-disk log.
+        if CotabbyLogger.app.logLevel <= .trace {
+            var metadata: Logger.Metadata = [
+                "stage": .string("input-event"),
+                "kind": .string(capturedEvent.kind.rawValue),
+                "char_count": .stringConvertible(capturedEvent.characters.count)
+            ]
+            if capturedEvent.kind != .textMutation {
+                metadata["key_code"] = .stringConvertible(capturedEvent.keyCode)
+            }
+            CotabbyLogger.app.trace("Observed key", metadata: metadata)
+        }
         guard !capturedEvent.kind.isAcceptance else {
             // Acceptance is handled by the active default tap, because only that callback can
             // make insertion and "consume the original key" one atomic decision. If the active

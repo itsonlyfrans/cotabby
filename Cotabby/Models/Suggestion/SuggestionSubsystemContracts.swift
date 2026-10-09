@@ -101,6 +101,19 @@ protocol EmojiInputIntercepting: AnyObject {
     func isWordAcceptKey(_ keyEvent: InputMonitorKeyEvent) -> Bool
 }
 
+/// Read-only access to the user's typing history for the suggestion pipeline.
+///
+/// Both answers are empty for the endpoint engine: history stays on this Mac, so it may only shape
+/// requests handled by Apple Intelligence or the in-process model. Implementations also return
+/// nothing while the user has history turned off, so callers never need to check settings.
+@MainActor
+protocol SuggestionHistoryProviding: AnyObject {
+    /// Short passages of the user's past writing that resemble the current field, best first.
+    func historyExamples(for context: FocusedInputContext, engine: SuggestionEngineKind) -> [String]
+    /// Exact text to insert when history is confident how the current phrase ends, else nil.
+    func phraseContinuation(for request: SuggestionRequest, engine: SuggestionEngineKind) -> String?
+}
+
 @MainActor
 protocol SuggestionGenerating: AnyObject {
     func generateSuggestion(for request: SuggestionRequest) async throws -> SuggestionResult
@@ -213,10 +226,10 @@ protocol SuggestionInserting: AnyObject {
 
     func insert(_ suggestion: String) -> Bool
 
-    /// Deletes `deletingUTF16Count` already-typed units and types `text` in one suppressed synthetic
-    /// burst. The correction-acceptance path uses this to swap a typo'd word for the corrected word.
-    /// `SuggestionInserter` already implements it (the emoji picker shares the same primitive).
-    func replace(deletingUTF16Count: Int, with text: String) -> Bool
+    /// Replaces the verified live suffix with `text` in one suppressed synthetic burst. Carrying
+    /// the original text lets the inserter count user-perceived characters for Delete key events;
+    /// AX's UTF-16 range length would overdelete decomposed letters and emoji.
+    func replace(deletingText: String, with text: String) -> Bool
 }
 
 /// The emoji picker's slice of the inserter: replace a run of already-typed characters (the literal
@@ -243,6 +256,13 @@ protocol SuggestionOverlayControlling: AnyObject {
     var state: OverlayState { get }
     var onStateChange: ((OverlayState) -> Void)? { get set }
 
+    /// Text the last `showSuggestion` call asked for but that the controller is still holding off
+    /// screen (waiting for a pixel caret read, or for a host caret that lags its published text).
+    /// `state` is not updated until the held present lands, so it keeps describing the previous
+    /// presentation; acceptance consults this to tell "our own present is in flight" apart from a
+    /// genuinely stale ghost. Nil whenever nothing is held.
+    var heldPresentationText: String? { get }
+
     func showSuggestion(_ text: String, geometry: SuggestionOverlayGeometry)
     func hide(reason: String)
 
@@ -253,12 +273,22 @@ protocol SuggestionOverlayControlling: AnyObject {
     /// safely slide (hidden, mirror mode, RTL, multi-line, or nothing rendered to measure
     /// against); callers then fall back to a caret-anchored present.
     func advanceInline(to remainingText: String, insertedText: String) -> Bool
+
+    /// Called when generation starts for `context`, so the controller can do the slow parts of an
+    /// inline presentation (measuring the host's painted baseline) before the suggestion arrives.
+    func prepareInlinePresentation(for context: FocusedInputContext)
 }
 
 extension SuggestionOverlayControlling {
+    /// Default: presentations are applied synchronously, so nothing is ever held.
+    var heldPresentationText: String? { nil }
+
     /// Default: not supported, so conformers that do not render an inline panel (e.g. test doubles)
     /// transparently fall back to the caret-anchored present path.
     func advanceInline(to remainingText: String, insertedText: String) -> Bool { false }
+
+    /// Default: nothing to prepare.
+    func prepareInlinePresentation(for context: FocusedInputContext) {}
 }
 
 @MainActor
@@ -267,8 +297,16 @@ protocol VisualContextCoordinating: AnyObject {
     var latestExcerpt: String? { get }
     var onStateChange: ((VisualContextStatus, String?) -> Void)? { get set }
     var onInjectedContextReady: ((FocusedInputIdentity) -> Void)? { get set }
+    /// Rechecks live eligibility and focus before each background capture, without owning AX.
+    var refreshContextProvider: (() -> FocusedInputSnapshot?)? { get set }
 
-    func startSessionIfNeeded(for snapshotContext: FocusedInputSnapshot)
+    func startSessionIfNeeded(for snapshotContext: FocusedInputSnapshot, configuration: VisualContextConfiguration)
     func cancel(resetState: Bool)
     func excerpt(for context: FocusedInputContext) -> String?
+}
+
+extension VisualContextCoordinating {
+    func startSessionIfNeeded(for snapshotContext: FocusedInputSnapshot) {
+        startSessionIfNeeded(for: snapshotContext, configuration: .default)
+    }
 }

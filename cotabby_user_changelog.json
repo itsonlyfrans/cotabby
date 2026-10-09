@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "cotabby",
+    "name": "cotabby",
+    "accent": "#80647d",
+    "hubHref": "../../Changelogs/index.html",
+    "version": "1.0.0 (1)"
+  },
+  "generatedAt": "2026-10-09T12:37:52.015496-04:00",
+  "days": [
+    {
+      "date": "2026-10-09",
+      "sessions": [
+        {
+          "entries": [
+            {
+              "key": "fork-release",
+              "title": "The fork has its own notarized download",
+              "summary": "An Apple-verified ZIP now contains Cotabby Fork, which installs beside the original app and keeps separate settings.",
+              "category": "new",
+              "why": "You can try the fork without replacing the Cotabby installation you already have.",
+              "details": [
+                "The distribution app still needs its own interactive onboarding and Tab-acceptance check. Wider host testing is deferred to avoid taking over the desktop."
+              ],
+              "technical": {
+                "notes": "Universal Release 1.0.0 (1). Xcode submission and notarized export succeeded; a fresh ZIP extraction passed ticket, deep signature and Gatekeeper checks. Dev startup and both required permission grants were confirmed from state-only logs."
+              },
+              "points": [
+                "Manual release links replace inactive update buttons in fork builds.",
+                "The existing Cotabby Dev app now runs the latest fixes with its permission grants intact."
+              ],
+              "noPicture": "Desktop captures are deferred to respect the request for no foreground interruptions.",
+              "source": "cli",
+              "createdAt": "2026-10-09T16:37:52.014509+00:00",
+              "updatedAt": "2026-10-09T16:37:52.014514+00:00",
+              "update": "2026-10-09-2",
+              "headline": "Familiar phrases, more room for context"
+            }
+          ],
+          "build": {
+            "built": true,
+            "version": "1.0.0 (1)"
+          },
+          "evidence": {
+            "built": {
+              "how": "cli",
+              "source": "cli",
+              "recordedAt": "2026-10-09T16:37:52.015410+00:00"
+            },
+            "version": {
+              "how": "cli",
+              "source": "cli",
+              "recordedAt": "2026-10-09T16:37:52.015422+00:00"
+            }
+          }
+        },
+        {
+          "entries": [
+            {
+              "key": "combined-apple-context",
+              "title": "Large writing contexts fit Apple Intelligence",
+              "summary": "Cotabby now budgets the whole request before generating. Oversized multilingual notes that previously exceeded Apple Intelligence limits can produce suggestions while keeping nearby text.",
+              "category": "fixed",
+              "why": "Long notes, clipboard references, and writing history can stay useful without causing a context-limit failure.",
+              "technical": {
+                "notes": "Six live stress scenarios passed: five raw inputs overflowed the actual 8192-token window, bounded input fit, all four reference facts were recalled, and duplicate suffix text stayed suppressed. The unchanged 52-case Release suite passed. Awkward mid-line wording remains a known limitation."
+              },
+              "points": [
+                "Keeps room for the suggestion itself and preserves text nearest the cursor.",
+                "Avoids extra token-counting work for ordinary short requests."
+              ],
+              "highlight": true,
+              "noPicture": "Desktop captures are deferred to respect the request for no foreground interruptions.",
+              "source": "cli",
+              "createdAt": "2026-10-09T16:28:16.507252+00:00",
+              "updatedAt": "2026-10-09T16:28:16.507259+00:00",
+              "update": "2026-10-09-2",
+              "headline": "Familiar phrases, more room for context"
+            },
+            {
+              "key": "history-capitalization",
+              "title": "Familiar phrases keep their names and capitals",
+              "summary": "Remembered phrases now retain the spelling used in that phrase, even when the same word appears lowercase elsewhere.",
+              "category": "fixed",
+              "why": "Names and acronyms no longer need recasing after accepting a familiar phrase.",
+              "technical": {
+                "notes": "Context-specific spelling regression tests pass. An optimized 1.63 million-token construction benchmark measured 37.28 MiB before versus 37.33 MiB after across three runs each; these are whole-process peaks, not exact retained heap."
+              },
+              "highlight": true,
+              "noPicture": "Desktop captures are deferred to respect the request for no foreground interruptions.",
+              "source": "cli",
+              "createdAt": "2026-10-09T16:26:20.596609+00:00",
+              "updatedAt": "2026-10-09T16:26:20.596616+00:00",
+              "update": "2026-10-09-2",
+              "headline": "Familiar phrases, more room for context",
+              "intro": "This follow-up protects the words you meant and makes large writing contexts safer to use. A separate fork installer is being prepared alongside the existing app."
+            },
+            {
+              "key": "personal-vocabulary",
+              "title": "Cotabby remembers the words you choose",
+              "summary": "Save names and specialist words in Writing settings. A unique saved prefix finishes locally before AI continues the sentence, and saved words keep their spelling.",
+              "category": "new",
+              "why": "Your project names and unusual surnames finish correctly instead of being guessed or treated as typos.",
+              "technical": {
+                "notes": "340 focused regression tests pass. 52 actual Apple Intelligence evaluation cases completed. Native global-key tests accepted Paris and completed Quasarwic to exactly Quasarwick. Local word offers do not inflate model-quality counters or reuse stale model caches."
+              },
+              "points": [
+                "Add or remove individual words, or clear the list.",
+                "Ambiguous prefixes wait for normal prediction; changing the list takes effect immediately.",
+                "The vocabulary list stays local and is not added to AI requests."
+              ],
+              "highlight": true,
+              "details": [
+                "Signed local development build; vocabulary controls and global Tab acceptance verified in TextEdit.",
+                "User-confirmed in normal use."
+              ],
+              "noPicture": "Native UI was inspected through Computer Use, but a clean app-only capture could not be saved. Whole-screen captures contained unrelated private windows and were discarded.",
+              "source": "cli",
+              "createdAt": "2026-10-09T06:34:35.853716+00:00",
+              "updatedAt": "2026-10-09T07:09:59.707361+00:00",
+              "update": "2026-10-09",
+              "headline": "Suggestions that respect your words",
+              "intro": "This development build adds a personal word list and fixes cases where suggestions could repeat or replace the wrong text."
+            },
+            {
+              "key": "focused-field-and-popup",
+              "title": "Suggestions stay with the active writing field",
+              "summary": "When Cotabby recovers a missing text field, it now checks that the field is focused in the current window. Suggestion popups move above the cursor when there is too little room below.",
+              "category": "fixed",
+              "why": "Switching windows is less likely to leave a suggestion attached to an old field, and the popup stays on screen.",
+              "technical": {
+                "notes": "Recovery validates actual focus and current-window membership with bounded ancestry traversal. Renderer subprocesses remain supported without relying only on process IDs."
+              },
+              "points": [
+                "Recognizes the exact Slack, Element, and Ferdium app identities for field recovery."
+              ],
+              "details": [
+                "Signed development build; focus policy, app identity, and popup geometry tests pass. The three messaging apps are not installed for live testing.",
+                "This still needs ordinary use testing."
+              ],
+              "noPicture": "No safe saved app-only capture was available; inspected Computer Use images could not be exported, and private whole-screen captures were discarded.",
+              "source": "cli",
+              "createdAt": "2026-10-09T06:35:00.082479+00:00",
+              "updatedAt": "2026-10-09T06:35:00.082484+00:00",
+              "update": "2026-10-09",
+              "headline": "Suggestions that respect your words"
+            },
+            {
+              "key": "safer-corrections-and-history",
+              "title": "Corrections and familiar phrases keep surrounding text intact",
+              "summary": "Accented letters and emoji no longer make typo corrections delete extra characters. Familiar phrase suggestions also avoid repeating text already below the cursor.",
+              "category": "fixed",
+              "why": "Accepting a suggestion keeps the words you already wrote and avoids duplicate sign-offs.",
+              "technical": {
+                "notes": "Focused coordinator, history, Unicode, and insertion tests pass. An AppKit NSTextView probe preserves preceding text for decomposed accents, joined emoji, and flags."
+              },
+              "points": [
+                "Phrase suggestions obey their word limit even after a complete first word.",
+                "Unsafe history matches fall back to the selected completion engine."
+              ],
+              "details": [
+                "Signed development build; regression checks and native text-deletion probe passed, everyday-app checks remain.",
+                "This still needs ordinary use testing."
+              ],
+              "noPicture": "Native UI could be inspected but no clean app-only image could be saved without including unrelated private windows.",
+              "source": "cli",
+              "createdAt": "2026-10-09T06:34:48.377840+00:00",
+              "updatedAt": "2026-10-09T06:34:48.377845+00:00",
+              "update": "2026-10-09",
+              "headline": "Suggestions that respect your words"
+            }
+          ],
+          "build": {
+            "tests": "passed",
+            "built": true
+          },
+          "evidence": {
+            "tests": {
+              "how": "cli",
+              "source": "cli",
+              "recordedAt": "2026-10-09T06:34:35.854232+00:00"
+            },
+            "built": {
+              "how": "cli",
+              "source": "cli",
+              "recordedAt": "2026-10-09T06:34:35.854235+00:00"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "upcoming": [
+    {
+      "key": "live-app-verification",
+      "kind": "todo",
+      "title": "Finish the fork and wider writing-app checks",
+      "summary": "The notarized distribution app needs its own first-run and Tab-acceptance check. TextEdit acceptance was verified with Cotabby Dev; Brave and the wider host matrix remain deferred to avoid foreground interruptions.",
+      "addedAt": "2026-10-09T06:29:11.953923+00:00"
+    },
+    {
+      "key": "apple-midline-wording",
+      "kind": "bug",
+      "title": "Improve wording before existing text",
+      "summary": "One oversized Apple Intelligence test produced awkward wording before the text already after the cursor. Context fitting and duplicate-text protection passed; fluent mid-sentence wording still needs improvement.",
+      "addedAt": "2026-10-09T16:28:47.886294+00:00"
+    }
+  ],
+  "_engine": {
+    "renderSha256": "d652a7d49975093898b6b8e35c63e556ce55192f796cc5eeb181017cc2a5cd09"
+  }
+}

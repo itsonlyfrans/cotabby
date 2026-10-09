@@ -94,17 +94,19 @@ struct DownloadableRuntimeModel: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// Maps installed model filenames to presentation names. Rebranding these labels never changes
+/// download URLs, model files, or the filenames persisted by the settings model.
 enum RuntimeModelCatalog {
     static func displayName(for filename: String) -> String {
         switch filename {
         case "Qwen3.5-0.8B-Base.i1-Q6_K.gguf":
-            return "tabby-2-nano"
+            return "Cotabby Nano"
         case "Qwen3.5-2B-Base.i1-Q4_K_M.gguf":
-            return "tabby-2-mini"
+            return "Cotabby Mini"
         case "gemma-4-E2B.i1-Q6_K.gguf":
-            return "tabby-2-base"
+            return "Cotabby Base"
         case "gemma-4-E4B.i1-Q4_K_M.gguf":
-            return "tabby-2-pro"
+            return "Cotabby Pro"
         default:
             return filename
         }
@@ -166,7 +168,7 @@ struct LlamaRuntimeConfiguration: Equatable, Sendable {
             "Qwen3.5-0.8B-Base.i1-Q6_K.gguf",
             "gemma-4-E4B.i1-Q4_K_M.gguf"
         ],
-        contextWindowTokens: 2048,
+        contextWindowTokens: 4096,
         batchSize: 512,
         gpuLayerCount: -1
     )
@@ -199,6 +201,9 @@ struct LlamaGenerationOptions: Equatable, Sendable {
     /// degenerate instant stops (e.g. a lone leading period). Lives here so length presets can tune
     /// the floor without reaching into `DecodeStopPolicy`; the default preserves prior behavior.
     var sentenceStopMinimumTokens: Int = 2
+    /// Minimum whitespace-separated words before the sentence-boundary early stop may fire; the
+    /// word-count preset's lower bound, so short sentence ends do not cut a suggestion to one word.
+    var sentenceStopMinimumWords: Int = 0
 
     /// Stop decoding the moment the raw distribution's most-likely next token is end-of-generation,
     /// even when the stochastic sampler drew something else. The model's top choice being "stop"

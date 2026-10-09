@@ -32,7 +32,7 @@ struct AboutPaneView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Cotabby")
+                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Cotabby")
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
 
                 Text("Local macOS AI Autocomplete")
@@ -46,10 +46,23 @@ struct AboutPaneView: View {
 
             Spacer(minLength: 12)
 
-            Button {
-                appUpdateManager.checkForUpdates()
-            } label: {
-                Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+            if let releasesURL = appUpdateManager.manualReleasesURL {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Link(destination: releasesURL) {
+                        Label("View Fork Releases", systemImage: "arrow.up.right.square")
+                    }
+                    .help("Fork updates are installed manually. Download a newer version from the releases page.")
+                    Text("Install fork updates manually.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Button {
+                    appUpdateManager.checkForUpdates()
+                } label: {
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!appUpdateManager.supportsAutomaticUpdates)
             }
         }
         .padding(.vertical, 4)
@@ -90,7 +103,7 @@ struct AboutPaneView: View {
     /// search can scroll to and pulse individually.
     @ViewBuilder
     private var resourceRows: some View {
-        if let repoURL = URL(string: "https://github.com/FuJacob/Cotabby") {
+        if let repoURL = appUpdateManager.sourceRepositoryURL {
             Link(destination: repoURL) {
                 Label("GitHub Repository", systemImage: "chevron.left.forwardslash.chevron.right")
             }
@@ -113,10 +126,8 @@ struct AboutPaneView: View {
 
     @ViewBuilder
     private var uninstallText: some View {
-        Text(
-            "Remove Cotabby from Applications. To fully clean up app data, "
-            + "delete ~/Library/Application Support/Cotabby."
-        )
+        let dataDirectory = BundledRuntimeLocator.userRuntimeDirectoryURL().deletingLastPathComponent().path
+        Text("Remove Cotabby from Applications. To fully clean up model data, delete \(dataDirectory).")
         .font(.caption)
         .foregroundStyle(.secondary)
     }

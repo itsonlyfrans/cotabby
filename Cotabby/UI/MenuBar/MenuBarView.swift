@@ -64,7 +64,7 @@ struct MenuBarView: View {
     @ViewBuilder
     private var headerSection: some View {
         HStack(alignment: .center) {
-            Text("Cotabby")
+            Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Cotabby")
                 .font(.headline)
 
             if let appShortVersion {
@@ -74,11 +74,9 @@ struct MenuBarView: View {
                     .accessibilityLabel("Version \(appShortVersion)")
             }
 
-            // Ko-fi tip jar lives next to the title because the menu bar surface is the most
-            // frequented entry point. Using a Link lets SwiftUI hand the URL to NSWorkspace and
-            // dismiss the popover; a Button would need its own handler plumbing for the same effect.
-            if let kofiURL = URL(string: "https://ko-fi.com/cotabby") {
-                Link("Support Us", destination: kofiURL)
+            // A plain source link keeps project information separate from the product title.
+            if let projectURL = appUpdateManager.sourceRepositoryURL {
+                Link("GitHub", destination: projectURL)
                     .buttonStyle(.borderless)
                     .font(.subheadline)
             }
@@ -111,21 +109,6 @@ struct MenuBarView: View {
     @ViewBuilder
     private var controlsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Toggle("Fast Mode", isOn: fastModeForcedOn ? .constant(true) : fastModeEnabledBinding)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .disabled(fastModeForcedOn)
-
-                if fastModeForcedOn {
-                    Text("Forced on because Screen Recording is off")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Divider()
-
             // Activation lives in its own band. While active, the menu offers bounded and manual
             // pauses. While paused or globally disabled, those choices are replaced by one recovery
             // action so the user cannot accidentally stack contradictory disable states.
@@ -162,13 +145,6 @@ struct MenuBarView: View {
                     .menuStyle(.borderlessButton)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-
-                if let application = focusModel.latestExternalApplication,
-                   !TerminalAppDetector.isTerminal(bundleIdentifier: application.bundleIdentifier) {
-                    Toggle("Enable in \(application.applicationName)", isOn: appEnabledBinding(for: application))
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                }
             }
 
             Divider()
@@ -178,6 +154,19 @@ struct MenuBarView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Use screen context", isOn: screenContextUnavailable ? .constant(false) : screenContextEnabledBinding)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(screenContextUnavailable)
+
+                if screenContextUnavailable {
+                    Text("Unavailable while Screen Recording is off")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Divider()
 
             // Generation setup: which engine/model produces completions and how long they run.
@@ -186,9 +175,17 @@ struct MenuBarView: View {
             Group {
                 MenuBarPickerRow(title: "Engine") {
                     Picker("Engine", selection: selectedEngineBinding) {
+                        // Same gating as Settings and onboarding: an unavailable engine is shown
+                        // greyed out with an "(Unavailable)" suffix and cannot be picked.
                         ForEach(SuggestionEngineKind.allCases) { engine in
-                            Text(engine.displayLabel)
-                                .tag(engine)
+                            Text(
+                                SuggestionEngineSelectionPolicy.pickerLabel(
+                                    for: engine,
+                                    foundationModelAvailable: foundationModelAvailabilityService.isAvailable
+                                )
+                            )
+                            .tag(engine)
+                            .selectionDisabled(!isEngineSelectable(engine))
                         }
                     }
                     .labelsHidden()
@@ -325,10 +322,17 @@ struct MenuBarView: View {
             }
             .buttonStyle(.borderless)
 
-            Button("Check for Updates") {
-                appUpdateManager.checkForUpdates()
+            if let releasesURL = appUpdateManager.manualReleasesURL {
+                Link("View Fork Releases", destination: releasesURL)
+                    .buttonStyle(.borderless)
+                    .help("Fork updates are installed manually. Download a newer version from the releases page.")
+            } else {
+                Button("Check for Updates") {
+                    appUpdateManager.checkForUpdates()
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appUpdateManager.supportsAutomaticUpdates)
             }
-            .buttonStyle(.borderless)
 
             Spacer(minLength: 0)
 
@@ -350,27 +354,18 @@ struct MenuBarView: View {
         )
     }
 
-    private var fastModeEnabledBinding: Binding<Bool> {
+    /// Keep the positive UI control compatible with the existing inverse stored preference.
+    private var screenContextEnabledBinding: Binding<Bool> {
         Binding(
-            get: { suggestionSettings.isFastModeEnabled },
-            set: { suggestionSettings.setFastModeEnabled($0) }
+            get: { !suggestionSettings.isFastModeEnabled },
+            set: { suggestionSettings.setFastModeEnabled(!$0) }
         )
     }
 
-    private func appEnabledBinding(for application: FocusedApplicationIdentity) -> Binding<Bool> {
-        Binding(
-            get: {
-                !suggestionSettings.isApplicationDisabled(
-                    bundleIdentifier: application.bundleIdentifier
-                )
-            },
-            set: { enabled in
-                suggestionSettings.setApplicationDisabled(
-                    bundleIdentifier: application.bundleIdentifier,
-                    displayName: application.applicationName,
-                    disabled: !enabled
-                )
-            }
+    private func isEngineSelectable(_ engine: SuggestionEngineKind) -> Bool {
+        SuggestionEngineSelectionPolicy.isSelectable(
+            engine,
+            foundationModelAvailable: foundationModelAvailabilityService.isAvailable
         )
     }
 
@@ -378,6 +373,8 @@ struct MenuBarView: View {
         Binding(
             get: { suggestionSettings.selectedEngine },
             set: { engine in
+                // Never persist an engine this Mac cannot run, as a guard behind the disabled item.
+                guard isEngineSelectable(engine) else { return }
                 // With power-based switching on, the active engine is owned by the current power
                 // source's profile. Editing it here writes that profile (battery vs. plugged-in)
                 // instead of `selectedEngine`, which the switcher would otherwise revert. The profile
@@ -485,10 +482,9 @@ struct MenuBarView: View {
         permissionManager.allPermissionsGranted
     }
 
-    /// Fast Mode is forced on and locked while Screen Recording is unavailable, since visual context
-    /// can't run without it. The user's stored preference is preserved and restored once the
-    /// permission is granted.
-    private var fastModeForcedOn: Bool {
+    /// Permission availability changes the displayed state without overwriting the user's choice.
+    /// Granting Screen Recording restores that choice through the settings model.
+    private var screenContextUnavailable: Bool {
         !permissionManager.screenRecordingGranted
     }
 
@@ -517,15 +513,27 @@ private struct MenuBarWindowBackgroundModifier: ViewModifier {
             // outside the content; keeping both surfaces visible is what creates the double
             // outline. By owning the one visible rounded surface here, the menu has a single border
             // regardless of how much padding the system host reserves around it.
+            //
+            // No SwiftUI `.shadow` here: the host window is only a few points larger than this
+            // panel, so a soft shadow gets clipped at the window edge and reads as a hard gray
+            // frame around the menu. The native window shadow (enabled in the configurator) is
+            // drawn by the window server outside the window and follows the panel's alpha shape.
+            //
+            // `.ignoresSafeArea()` matters on macOS 27: the host window is 8pt taller than this
+            // view (a 4pt safe-area inset top and bottom), and the system paints its own rounded
+            // backing across the whole window. A panel that stops at the safe area leaves that
+            // backing showing as a gray frame above and below the menu; filling to the window
+            // edges covers it so there is one surface.
             content
                 .background {
                     RoundedRectangle(cornerRadius: Self.macOS26PopoverCornerRadius, style: .continuous)
                         .fill(Color(nsColor: .windowBackgroundColor))
-                        .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 8)
+                        .ignoresSafeArea()
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: Self.macOS26PopoverCornerRadius, style: .continuous)
                         .stroke(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 1)
+                        .ignoresSafeArea()
                 }
         } else if #available(macOS 15.0, *) {
             // MenuBarExtra's `.window` style already gives us native rounded window chrome. Place
@@ -552,7 +560,10 @@ private enum MenuBarWindowChromeConfigurator {
     static func configure(_ window: NSWindow) {
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.hasShadow = false
+        // The window itself is clear, so the window server derives the shadow from the alpha of
+        // the SwiftUI panel: it hugs the rounded rectangle and, unlike a SwiftUI shadow, is not
+        // clipped by the window's bounds.
+        window.hasShadow = true
 
         for backingView in [window.contentView, window.contentView?.superview].compactMap({ $0 }) {
             backingView.wantsLayer = true

@@ -83,11 +83,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        suggestionSettings.$selectedEngine
+        // The engine and the two fallback switches decide whether the local model stays loaded.
+        // The publisher carries the decision computed from the emitted values: `@Published` emits
+        // before the property changes, so reading `suggestionSettings` here would act on the old
+        // settings. `dropFirst` skips the replayed current value; launch applies it explicitly.
+        suggestionSettings.localRuntimeResidencyPublisher
             .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.startRuntimeIfPreferredEngineRequiresIt()
+            .sink { [weak self] keepsModelLoaded in
+                self?.applyRuntimeResidency(keepsModelLoaded: keepsModelLoaded)
             }
             .store(in: &cancellables)
 
@@ -109,6 +112,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         if let focusDebugOverlayController {
+            // @Published emits its new value before the property itself changes. Use `enabled`
+            // directly so the panels respond immediately, including the initial stored value.
+            suggestionSettings.$showDevelopmentDebugOverlays
+                .removeDuplicates()
+                .sink { [weak self, weak focusDebugOverlayController] enabled in
+                    guard let self, let focusDebugOverlayController else { return }
+                    focusDebugOverlayController.setEnabled(enabled)
+                    self.focusModel.setPollingDiagnosticsEnabled(focusDebugOverlayController.isEnabled)
+                    if focusDebugOverlayController.isEnabled {
+                        focusDebugOverlayController.update(for: self.focusModel.snapshot)
+                        focusDebugOverlayController.updateVisualContext(
+                            status: self.suggestionCoordinator.visualContextStatus,
+                            excerpt: self.suggestionCoordinator.latestVisualContextText
+                        )
+                    }
+                }
+                .store(in: &cancellables)
+
             focusModel.$latestPollEvent
                 .compactMap { $0 }
                 .sink { [weak focusDebugOverlayController] pollEvent in
@@ -229,6 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activationIndicatorController.hide(reason: "Activation indicator hidden because Cotabby is terminating.")
         focusDebugOverlayController?.hide()
         suggestionCoordinator.stop()
+        // Write the field being typed in now; the debounced background save may not have run yet.
+        environment.typingHistoryStore.flush()
         inlineCommandCoordinator.stop()
         inputMonitor.stop()
         focusModel.stop()
@@ -260,15 +283,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    /// Warm the local runtime only when the user is actually on a local engine path.
-    /// This avoids noisy startup failures and wasted work for Apple Intelligence users.
+    /// Warm the local runtime only when the user is actually on a local engine path, or chose to keep
+    /// the Apple Intelligence fallback model ready. This avoids noisy startup failures and wasted
+    /// work for everyone else. Safe to call outside a `@Published` sink, where settings are current.
     private func startRuntimeIfPreferredEngineRequiresIt() {
-        switch suggestionSettings.selectedEngine {
-        case .llamaOpenSource:
+        applyRuntimeResidency(keepsModelLoaded: suggestionSettings.keepsLocalRuntimeLoaded)
+    }
+
+    /// Starts or stops the runtime for a decision from `LocalRuntimeResidencyPolicy`.
+    private func applyRuntimeResidency(keepsModelLoaded: Bool) {
+        if keepsModelLoaded {
             runtimeModel.startIfNeeded()
-        case .appleIntelligence, .openAICompatible:
+        } else {
             // Switching away must release Metal buffers and the mapped GGUF. Otherwise an Ollama
-            // user still pays the duplicate memory cost the external endpoint is meant to avoid.
+            // user still pays the duplicate memory cost the external endpoint is meant to avoid, and
+            // an Apple Intelligence user keeps a model they asked not to keep loaded.
             runtimeModel.stop()
         }
     }
@@ -282,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Xcode's app-hosted unit tests launch the real menu-bar app binary before loading the test
     /// bundle. Those tests instantiate focused services directly, so starting global taps, focus
-    /// polling, Sparkle, and the llama runtime in the host process only adds side effects and can
+    /// polling, update checks, and the llama runtime in the host process only adds side effects and can
     /// crash before a test assertion runs. The environment variable is supplied by XCTest only.
     private static var isRunningUnderXCTest: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil

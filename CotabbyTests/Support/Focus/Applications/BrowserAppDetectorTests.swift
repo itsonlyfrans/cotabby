@@ -12,6 +12,8 @@ final class BrowserAppDetectorTests: XCTestCase {
         XCTAssertTrue(BrowserAppDetector.isBrowser(bundleIdentifier: "org.mozilla.firefox"))
         XCTAssertTrue(BrowserAppDetector.isBrowser(bundleIdentifier: "com.brave.Browser"))
         XCTAssertTrue(BrowserAppDetector.isBrowser(bundleIdentifier: "company.thebrowser.Browser"))
+        XCTAssertTrue(BrowserAppDetector.isBrowser(bundleIdentifier: "com.microsoft.edgemac"))
+        XCTAssertTrue(BrowserAppDetector.isBrowser(bundleIdentifier: "com.apple.SafariTechnologyPreview"))
         XCTAssertFalse(BrowserAppDetector.isBrowser(bundleIdentifier: "com.apple.Terminal"))
         XCTAssertFalse(BrowserAppDetector.isBrowser(bundleIdentifier: nil))
     }
@@ -37,9 +39,49 @@ final class BrowserAppDetectorTests: XCTestCase {
         XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.microsoft.VSCode"))
         XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.microsoft.VSCodeInsiders"))
         XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.vscodium"))
+        // Obsidian (#791): Electron 39 / CodeMirror 6. Its app element advertises
+        // AXManualAccessibility, but nothing flips it unless the bundle is allowlisted here, so the
+        // editor's web-AX tree stays dormant and no focused field ever resolves.
+        XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: "md.obsidian"))
+        XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: "MD.Obsidian"))
         // Electron, but not a text-editing surface we cover: must stay out of the priming allowlist.
         XCTAssertFalse(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.hnc.Discord"))
         XCTAssertFalse(BrowserAppDetector.isElectronEditor(bundleIdentifier: nil))
+    }
+
+    func testElectronEditorAllowlistIsExactNotPrefix() {
+        // Unlike the browser families, helpers and sibling ids of an allowlisted editor must not be
+        // primed wholesale.
+        XCTAssertFalse(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.microsoft.VSCode.helper"))
+        XCTAssertFalse(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.clickup"))
+    }
+
+    func testMessagingComposersUseExactEditorRecoveryWithoutBrowserClassification() {
+        // The release app identities enable all existing Electron recovery gates. They must not
+        // turn unrelated helpers, nightly builds, or sibling applications into trusted hosts.
+        for bundleIdentifier in ["com.tinyspeck.slackmacgap", "im.riot.app", "org.ferdium.ferdium-app"] {
+            for spelling in [bundleIdentifier, bundleIdentifier.uppercased()] {
+                XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: spelling), spelling)
+                XCTAssertTrue(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: spelling), spelling)
+                XCTAssertFalse(BrowserAppDetector.isBrowser(bundleIdentifier: spelling), spelling)
+            }
+            XCTAssertFalse(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: bundleIdentifier + ".helper"))
+        }
+        for sibling in ["com.tinyspeck.other", "im.riot.nightly", "org.ferdium.other"] {
+            XCTAssertFalse(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: sibling), sibling)
+        }
+    }
+
+    func testChatGPTCodexUsesEditorRecoveryWithoutBrowserClassification() {
+        // The installed app is named ChatGPT but uses the Codex bundle identity. Recovery must
+        // follow that identity while unrelated OpenAI apps stay outside the explicit allowlist.
+        for bundleIdentifier in ["com.openai.codex", "COM.OPENAI.CODEX"] {
+            XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: bundleIdentifier))
+            XCTAssertTrue(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: bundleIdentifier))
+            XCTAssertFalse(BrowserAppDetector.isBrowser(bundleIdentifier: bundleIdentifier))
+        }
+        XCTAssertFalse(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: "com.openai.other"))
+        XCTAssertFalse(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: "com.openai.codex.helper"))
     }
 
     func testNeedsPrimingForChromiumAndElectronOnly() {
@@ -49,6 +91,8 @@ final class BrowserAppDetectorTests: XCTestCase {
             BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: "com.clickup.desktop-app"))
         XCTAssertTrue(
             BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: "com.microsoft.VSCode"))
+        XCTAssertTrue(
+            BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: "md.obsidian"))
         XCTAssertFalse(
             BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: "com.apple.Safari"))
         XCTAssertFalse(

@@ -46,14 +46,32 @@ nonisolated enum BrowserAppDetector {
     /// editor, the Copilot chat, or the integrated terminal, so no suggestions appear anywhere in the
     /// app even though screenshot-based OCR keeps working.
     ///
+    /// Obsidian (`md.obsidian`, issue #791) is the same failure in a different editor. Its
+    /// CodeMirror 6 surface is a `contenteditable` with `role="textbox"`, which Chromium exposes as
+    /// `AXTextArea` only once the web-AX tree is awake. A read-only probe of Obsidian 1.12.7
+    /// (Electron 39) showed the application element advertising `AXManualAccessibility` (settable,
+    /// value 0) while the focused window held a single bare `AXGroup`: the dormant renderer view.
+    /// With the bundle absent here nothing ever flipped that switch, so the system-wide focus query
+    /// returned nil and the tracker reported "No focused Accessibility element" on every tick.
+    ///
     /// Cursor is intentionally absent: it ships under opaque ToDesktop bundle ids
     /// (`com.todesktop.<hash>`) that change between builds, so there is no stable id to allowlist
     /// here without a broad `com.todesktop.` prefix that would also prime unrelated ToDesktop apps.
     private static let electronEditorBundleIdentifiers: Set<String> = [
         "com.clickup.desktop-app",
+        // The Chromium-based ChatGPT/Codex desktop build identifies as com.openai.codex.
+        // Match its bundle identity, not its display name, so focus recovery can reach its composer.
+        "com.openai.codex",
         "com.microsoft.vscode",          // Visual Studio Code
         "com.microsoft.vscodeinsiders",  // VS Code - Insiders
-        "com.vscodium"                   // VSCodium (FOSS VS Code build)
+        "com.vscodium",                  // VSCodium (FOSS VS Code build)
+        "md.obsidian",                   // Obsidian (Electron, CodeMirror 6 editor) — #791
+        // These messaging composers also need the lazy web-AX recovery path (#822, #859).
+        // Exact release identities come from Slack's macOS help, Element's release build.json,
+        // and Ferdium's electron-builder.yml; helper processes and sibling builds stay excluded.
+        "com.tinyspeck.slackmacgap",      // Slack
+        "im.riot.app",                   // Element
+        "org.ferdium.ferdium-app"         // Ferdium
     ]
 
     /// Broad check: is the user typing inside any web browser? Used for prompt tone hints.

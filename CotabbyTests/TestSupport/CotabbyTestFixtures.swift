@@ -31,7 +31,8 @@ enum CotabbyTestFixtures {
         focusChangeSequence: UInt64 = 1,
         focusedURLString: String? = nil,
         windowTitle: String? = nil,
-        fieldPlaceholder: String? = nil
+        fieldPlaceholder: String? = nil,
+        hostMarkedTextRange: NSRange? = nil
     ) -> FocusedInputSnapshot {
         let resolvedSelection = selection
             ?? NSRange(location: (precedingText as NSString).length, length: 0)
@@ -58,7 +59,8 @@ enum CotabbyTestFixtures {
             focusChangeSequence: focusChangeSequence,
             focusedURLString: focusedURLString,
             windowTitle: windowTitle,
-            fieldPlaceholder: fieldPlaceholder
+            fieldPlaceholder: fieldPlaceholder,
+            hostMarkedTextRange: hostMarkedTextRange
         )
     }
 
@@ -124,6 +126,7 @@ enum CotabbyTestFixtures {
         languageInstruction: String? = nil,
         clipboardContext: String? = nil,
         visualContextSummary: String? = nil,
+        historyExamples: [String] = [],
         isMultiLineEnabled: Bool = false
     ) -> SuggestionRequest {
         let resolvedPrecedingText = precedingText ?? prefixText
@@ -153,6 +156,7 @@ enum CotabbyTestFixtures {
             languageInstruction: languageInstruction,
             clipboardContext: clipboardContext,
             visualContextSummary: visualContextSummary,
+            historyExamples: historyExamples,
             isMultiLineEnabled: isMultiLineEnabled
         )
     }
@@ -183,7 +187,8 @@ enum CotabbyTestFixtures {
         caretQuality: CaretGeometryQuality = .exact,
         isCaretAtEndOfLine: Bool = true,
         observedCharWidth: CGFloat? = nil,
-        isRightToLeft: Bool = false
+        isRightToLeft: Bool = false,
+        observedContentEdges: ObservedContentEdges? = nil
     ) -> SuggestionOverlayGeometry {
         SuggestionOverlayGeometry(
             caretRect: caretRect,
@@ -191,7 +196,8 @@ enum CotabbyTestFixtures {
             caretQuality: caretQuality,
             isCaretAtEndOfLine: isCaretAtEndOfLine,
             observedCharWidth: observedCharWidth,
-            isRightToLeft: isRightToLeft
+            isRightToLeft: isRightToLeft,
+            observedContentEdges: observedContentEdges
         )
     }
 
@@ -254,16 +260,22 @@ enum CotabbyTestFixtures {
         debounceMilliseconds: Int = 50,
         focusPollIntervalMilliseconds: Int = 50,
         isMultiLineEnabled: Bool = false,
+        suggestWithinWords: Bool = true,
+        showFollowingWords: Bool = true,
         autoAcceptTrailingPunctuation: Bool = true,
         addSpaceAfterAccept: Bool = false,
         streamSuggestionsWhileGenerating: Bool = false,
+        predictAheadWhileTyping: Bool = true,
         isFastModeEnabled: Bool = false,
         mirrorPreference: MirrorPreference = .auto,
         acceptanceGranularity: AcceptanceGranularity = .word,
         suppressCompletionsOnTypo: Bool = false,
         offerTypoCorrections: Bool = false,
         enabledSpellingDictionaryCodes: [String] = SpellingDictionaryCatalog.defaultEnabledCodes,
-        automaticallyFixTypos: Bool = false
+        automaticallyFixTypos: Bool = false,
+        personalVocabularyWords: [String] = [],
+        doubleTapAcceptsEntireSuggestion: Bool = false,
+        fullAcceptanceOverrideBundleIdentifiers: Set<String> = []
     ) -> SuggestionSettingsSnapshot {
         SuggestionSettingsSnapshot(
             isGloballyEnabled: isGloballyEnabled,
@@ -284,16 +296,22 @@ enum CotabbyTestFixtures {
             debounceMilliseconds: debounceMilliseconds,
             focusPollIntervalMilliseconds: focusPollIntervalMilliseconds,
             isMultiLineEnabled: isMultiLineEnabled,
+            suggestWithinWords: suggestWithinWords,
+            showFollowingWords: showFollowingWords,
             autoAcceptTrailingPunctuation: autoAcceptTrailingPunctuation,
             addSpaceAfterAccept: addSpaceAfterAccept,
             streamSuggestionsWhileGenerating: streamSuggestionsWhileGenerating,
+            predictAheadWhileTyping: predictAheadWhileTyping,
             isFastModeEnabled: isFastModeEnabled,
             mirrorPreference: mirrorPreference,
             acceptanceGranularity: acceptanceGranularity,
             suppressCompletionsOnTypo: suppressCompletionsOnTypo,
             offerTypoCorrections: offerTypoCorrections,
             enabledSpellingDictionaryCodes: enabledSpellingDictionaryCodes,
-            automaticallyFixTypos: automaticallyFixTypos
+            automaticallyFixTypos: automaticallyFixTypos,
+            personalVocabularyWords: PersonalVocabulary.normalize(personalVocabularyWords),
+            doubleTapAcceptsEntireSuggestion: doubleTapAcceptsEntireSuggestion,
+            fullAcceptanceOverrideBundleIdentifiers: fullAcceptanceOverrideBundleIdentifiers
         )
     }
 }

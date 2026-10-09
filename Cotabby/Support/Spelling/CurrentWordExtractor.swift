@@ -8,7 +8,9 @@ import Foundation
 /// We intentionally do not lean on `NSLinguisticTagger` or `NLTokenizer` here. Both pull in language
 /// detection that is overkill for the "is the cursor inside or just after a word" question. A
 /// whitespace walk is faster, deterministic, and easy to reason about.
-enum CurrentWordExtractor {
+/// `nonisolated` keeps these deterministic string operations usable by boundary policy without
+/// inheriting the app target's default MainActor isolation. No AppKit or shared state is touched.
+nonisolated enum CurrentWordExtractor {
     struct Result: Equatable, Sendable {
         let word: String
         /// Number of extended grapheme clusters in the word. This is the count the inserter needs:
@@ -106,15 +108,21 @@ enum CurrentWordExtractor {
 /// Keeping this as a value type lets the coordinator validate first and perform side effects second.
 /// That separation matters for Accessibility-backed editors, where the field may change between the
 /// original correction offer and the eventual edit.
-struct TypoCorrectionReplacement: Equatable, Sendable {
-    let deletingUTF16Count: Int
+nonisolated struct TypoCorrectionReplacement: Equatable, Sendable {
+    /// Preserve the live field's spelling, including its Unicode representation. Swift's String
+    /// equality accepts canonically equivalent letters, whose UTF-16 lengths can still differ.
+    let deletingText: String
     let replacementText: String
+
+    /// AX offsets and context slicing count UTF-16 units; synthetic Delete events count graphemes.
+    /// Derive each at its own boundary instead of passing an ambiguous integer between them.
+    var deletingUTF16Count: Int { deletingText.utf16.count }
 }
 
 /// Builds a fail-closed replacement from the latest text before the caret.
 ///
 /// Both accepted green corrections and automatic post-Space fixes use this planner. Centralizing the
-/// word-match and whitespace-preservation rules prevents the two paths from drifting and accidentally
+/// word-match and delimiter-preservation rules prevents the two paths from drifting and accidentally
 /// deleting a different word after the user continues typing.
 enum TypoCorrectionReplacementPlanner {
     static func plan(
@@ -126,16 +134,15 @@ enum TypoCorrectionReplacementPlanner {
         let normalizedCorrection = correctedWord.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedCorrection.isEmpty,
               normalizedCorrection != expectedTypo,
-              let live = CurrentWordExtractor.extractTrailingWord(from: precedingText),
-              live.result.word == expectedTypo,
-              !requiresTrailingSpace || live.trailingSpaceCount == 1 else {
+              let live = CaretWordContext.committedWord(in: precedingText),
+              live.word == expectedTypo,
+              !requiresTrailingSpace || live.delimiter == " " else {
             return nil
         }
 
-        let preservedSpaces = String(repeating: " ", count: live.trailingSpaceCount)
         return TypoCorrectionReplacement(
-            deletingUTF16Count: (expectedTypo as NSString).length + live.trailingSpaceCount,
-            replacementText: normalizedCorrection + preservedSpaces
+            deletingText: live.word + live.delimiter,
+            replacementText: normalizedCorrection + live.delimiter
         )
     }
 }

@@ -28,6 +28,11 @@ struct SuggestionEngineSettings: Equatable {
     var pluggedInEngine: SuggestionEngineKind
     var pluggedInModelFilename: String
     var pluggedInEndpointModelName: String
+    /// When Apple Intelligence rejects a language, retry with the selected Open Source model.
+    var isAppleLanguageFallbackEnabled: Bool
+    /// Keep that fallback model loaded while Apple Intelligence is selected, so the first
+    /// fallback suggestion does not wait for the model to load. Costs the model's memory.
+    var keepsFallbackModelLoaded: Bool
 }
 
 /// Completion length, timing, streaming, and acceptance behavior.
@@ -39,9 +44,15 @@ struct SuggestionCompletionSettings: Equatable {
     var debounceMilliseconds: Int
     var focusPollIntervalMilliseconds: Int
     var isMultiLineEnabled: Bool
+    /// Controls when new generation may start; a visible suggestion still follows matching typing.
+    var suggestWithinWords: Bool
+    /// Limits the visible preview, while the session retains following words for subsequent typing.
+    var showFollowingWords: Bool
     var autoAcceptTrailingPunctuation: Bool
     var addSpaceAfterAccept: Bool
     var streamSuggestionsWhileGenerating: Bool
+    /// Keeps an on-device request alive through matching typing, independently of partial display.
+    var predictAheadWhileTyping: Bool
     var acceptanceGranularity: AcceptanceGranularity
 }
 
@@ -62,6 +73,7 @@ struct SuggestionCorrectionSettings: Equatable {
     var offerTypoCorrections: Bool
     var enabledSpellingDictionaryCodes: [String]
     var automaticallyFixTypos: Bool
+    var personalVocabularyWords: [String]
 }
 
 /// Overlay, indicator, menu-bar, and transition presentation.
@@ -71,11 +83,16 @@ struct SuggestionPresentationSettings: Equatable {
     var customSuggestionTextColorHex: String?
     var ghostTextOpacity: Double
     var ghostTextSizeMultiplier: Double
+    /// Absolute point-size clamps for ghost text, applied after the size multiplier.
+    var ghostFontSizeFloor: Double
+    var ghostFontSizeCeiling: Double
     var isMenuBarIconVisible: Bool
     var isMenuBarWordCountVisible: Bool
     var mirrorPreference: MirrorPreference
     var fadeInSuggestions: Bool
     var fadeInDurationSeconds: Double
+    /// UI-only developer preference. Release builds ignore it; it never enters inference snapshots.
+    var showDevelopmentDebugOverlays: Bool = false
 }
 
 /// Non-model inline features that share the global input stream.
@@ -100,6 +117,11 @@ struct SuggestionShortcutSettings: Equatable {
     var fullAcceptance: SuggestionShortcutBindingSettings
     var globalToggle: SuggestionShortcutBindingSettings
     var perAppOverrides: [PerAppShortcutOverride]
+    /// When true, Accept Entire Suggestion is bound to a quick double press of the Accept Word key
+    /// instead of a one-press key; the model's setters keep `fullAcceptance` unbound while it is on.
+    /// The double tap follows each app's own Accept Word key, and applies only in apps that inherit
+    /// the global Accept Entire Suggestion binding.
+    var doubleTapAcceptsEntireSuggestion: Bool
 }
 
 /// Pure domain representation of every durable suggestion preference.
@@ -174,6 +196,16 @@ extension SuggestionSettingsData {
         set { engine.isPowerBasedModelSwitchingEnabled = newValue }
     }
 
+    var isAppleLanguageFallbackEnabled: Bool {
+        get { engine.isAppleLanguageFallbackEnabled }
+        set { engine.isAppleLanguageFallbackEnabled = newValue }
+    }
+
+    var keepsFallbackModelLoaded: Bool {
+        get { engine.keepsFallbackModelLoaded }
+        set { engine.keepsFallbackModelLoaded = newValue }
+    }
+
     var batteryEngine: SuggestionEngineKind {
         get { engine.batteryEngine }
         set { engine.batteryEngine = newValue }
@@ -239,6 +271,16 @@ extension SuggestionSettingsData {
         set { completion.isMultiLineEnabled = newValue }
     }
 
+    var suggestWithinWords: Bool {
+        get { completion.suggestWithinWords }
+        set { completion.suggestWithinWords = newValue }
+    }
+
+    var showFollowingWords: Bool {
+        get { completion.showFollowingWords }
+        set { completion.showFollowingWords = newValue }
+    }
+
     var autoAcceptTrailingPunctuation: Bool {
         get { completion.autoAcceptTrailingPunctuation }
         set { completion.autoAcceptTrailingPunctuation = newValue }
@@ -247,6 +289,11 @@ extension SuggestionSettingsData {
     var addSpaceAfterAccept: Bool {
         get { completion.addSpaceAfterAccept }
         set { completion.addSpaceAfterAccept = newValue }
+    }
+
+    var predictAheadWhileTyping: Bool {
+        get { completion.predictAheadWhileTyping }
+        set { completion.predictAheadWhileTyping = newValue }
     }
 
     var streamSuggestionsWhileGenerating: Bool {
@@ -314,6 +361,11 @@ extension SuggestionSettingsData {
         set { correction.automaticallyFixTypos = newValue }
     }
 
+    var personalVocabularyWords: [String] {
+        get { correction.personalVocabularyWords }
+        set { correction.personalVocabularyWords = newValue }
+    }
+
     var showIndicator: Bool {
         get { presentation.showIndicator }
         set { presentation.showIndicator = newValue }
@@ -337,6 +389,16 @@ extension SuggestionSettingsData {
     var ghostTextSizeMultiplier: Double {
         get { presentation.ghostTextSizeMultiplier }
         set { presentation.ghostTextSizeMultiplier = newValue }
+    }
+
+    var ghostFontSizeFloor: Double {
+        get { presentation.ghostFontSizeFloor }
+        set { presentation.ghostFontSizeFloor = newValue }
+    }
+
+    var ghostFontSizeCeiling: Double {
+        get { presentation.ghostFontSizeCeiling }
+        set { presentation.ghostFontSizeCeiling = newValue }
     }
 
     var isMenuBarIconVisible: Bool {
@@ -432,5 +494,10 @@ extension SuggestionSettingsData {
     var perAppShortcutOverrides: [PerAppShortcutOverride] {
         get { shortcuts.perAppOverrides }
         set { shortcuts.perAppOverrides = newValue }
+    }
+
+    var doubleTapAcceptsEntireSuggestion: Bool {
+        get { shortcuts.doubleTapAcceptsEntireSuggestion }
+        set { shortcuts.doubleTapAcceptsEntireSuggestion = newValue }
     }
 }

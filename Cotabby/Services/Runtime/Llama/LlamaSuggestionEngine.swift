@@ -138,7 +138,8 @@ final class LlamaSuggestionEngine {
                                 generation: request.generation,
                                 rawText: raw,
                                 text: normalized,
-                                latency: Date().timeIntervalSince(startTime)
+                                latency: Date().timeIntervalSince(startTime),
+                                spacingIsExact: true
                             ))
                         }
                     }
@@ -202,7 +203,10 @@ final class LlamaSuggestionEngine {
                 rawText: rawSuggestion,
                 text: normalizedSuggestion,
                 latency: latency,
-                suppressionReason: normalization.suppression?.rawValue
+                suppressionReason: normalization.suppression?.rawValue,
+                // A base model's completion follows the prompt text exactly: its leading space (or
+                // the lack of one) is the model's own word boundary.
+                spacingIsExact: true
             )
         } catch is CancellationError {
             CotabbyLogger.suggestion.debug("Llama generation cancelled", metadata: baseMetadata)
@@ -218,9 +222,10 @@ final class LlamaSuggestionEngine {
             // so that path fired ~twice a second — each time synchronously destroying the prompt KV on
             // the main actor (contending with the keystroke-delivery run loop) and forcing the next
             // keystroke to re-decode the whole prompt from scratch. The cooperative cancel inside
-            // `LlamaRuntimeCore.generate` already unwound cleanly (its KV-trim defer restored
-            // prompt-only state), so the cache is still valid and reusable. Route this to the same
-            // quiet path as `CancellationError` and leave the cache intact.
+            // `LlamaRuntimeCore.generate` closes the cancelled operation's abort target and retains
+            // its validated prompt descriptor. The next request restores that prefix before reuse,
+            // or rebuilds on a cache miss. Keep the sequence available for that decision rather
+            // than discarding every cancelled request's reusable context here.
             CotabbyLogger.suggestion.debug("Llama generation cancelled (runtime task)", metadata: baseMetadata)
             throw SuggestionClientError.cancelled
         } catch let error as LlamaRuntimeError {
@@ -276,6 +281,7 @@ final class LlamaSuggestionEngine {
                 trailingText: request.context.trailingText
             ),
             confidenceFloor: resolvedConfidenceFloor(),
+            sentenceStopMinimumWords: request.wordRange?.lowWords ?? 0,
             stopAtArgmaxEOG: resolvedStopAtArgmaxEOG()
         )
     }

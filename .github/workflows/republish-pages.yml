@@ -26,6 +26,8 @@ concurrency:
 
 jobs:
   republish:
+    # This appcast and custom domain belong to upstream, never to a cloned fork.
+    if: github.repository == 'FuJacob/cotabby'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -78,7 +80,7 @@ jobs:
           printf '%s\n' "${CUSTOM_DOMAIN}" > pages/CNAME
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -87,7 +89,7 @@ jobs:
 
       - name: Deploy GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       - name: Summary
         env:

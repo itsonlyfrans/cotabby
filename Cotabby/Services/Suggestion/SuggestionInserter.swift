@@ -35,8 +35,8 @@ final class SuggestionInserter {
     /// a failure (menu rebuilt, app quit) evicts and re-walks once.
     private var cachedPasteMenuItems: [pid_t: AXUIElement] = [:]
 
-    /// Virtual key code for Delete/Backspace. Posting these at the HID level deletes one UTF-16 unit
-    /// of already-typed text per pair, which is how the picker removes the literal `:query` run.
+    /// Virtual key code for Delete/Backspace. Each pair asks the host to delete one character;
+    /// keyboard deletion is not a UTF-16 range operation.
     private static let backspaceKeyCode: CGKeyCode = 0x33
 
     /// Virtual key code for the `V` key, used to synthesize Cmd-V in the paste insertion path.
@@ -126,8 +126,8 @@ final class SuggestionInserter {
         return true
     }
 
-    /// Deletes `deletingUTF16Count` already-typed UTF-16 units, then types `text`. Used by the emoji
-    /// picker to replace the literal `:query` (or `:query:`) run with the chosen glyph.
+    /// Retains the existing count-based path for inline emoji and macro queries. Unicode
+    /// corrections use `replace(deletingText:with:)` so their AX length cannot become a Delete count.
     ///
     /// All synthetic events are built first, then registered for suppression in a single call, then
     /// posted. Building before registering means a failed event allocation never leaves a phantom
@@ -135,7 +135,18 @@ final class SuggestionInserter {
     /// burst once means every backspace and the insertion keydown fall inside one suppression window,
     /// so none of our own deletes are re-observed as user typing.
     func replace(deletingUTF16Count: Int, with text: String) -> Bool {
-        let plan = SyntheticReplacePlanner.plan(deletingUTF16Count: deletingUTF16Count, text: text)
+        postReplacement(SyntheticReplacePlanner.plan(deletingUTF16Count: deletingUTF16Count, text: text))
+    }
+
+    /// Counts the exact verified suffix as graphemes before posting correction deletes. A decomposed
+    /// accent or a multi-scalar emoji occupies several UTF-16 units but one user-perceived character.
+    /// We retain keyboard insertion here: Chromium can report a successful AXSelectedText write
+    /// without changing its field, so that return code cannot safely justify an AX-first fallback.
+    func replace(deletingText: String, with text: String) -> Bool {
+        postReplacement(SyntheticReplacePlanner.plan(deletingText: deletingText, text: text))
+    }
+
+    private func postReplacement(_ plan: SyntheticReplacePlan) -> Bool {
         guard !plan.isNoop else {
             lastErrorMessage = nil
             return true
@@ -181,7 +192,7 @@ final class SuggestionInserter {
 
         lastErrorMessage = nil
         CotabbyLogger.suggestion.debug(
-            "Replaced \(plan.backspaceCount) unit(s) with \(plan.insertUTF16.count)-unit text via synthetic keystrokes"
+            "Replaced \(plan.backspaceCount) character(s) with \(plan.insertUTF16.count)-unit text via synthetic keystrokes"
         )
         return true
     }
@@ -341,10 +352,21 @@ struct SyntheticReplacePlan: Equatable {
 }
 
 enum SyntheticReplacePlanner {
+    /// Preserve existing inline trigger callers that supply a bare count.
     static func plan(deletingUTF16Count: Int, text: String) -> SyntheticReplacePlan {
+        plan(backspaceCount: max(deletingUTF16Count, 0), text: text)
+    }
+
+    /// Swift counts extended grapheme clusters, matching the character deletion requested from
+    /// ordinary text editors. Preserve UTF-16 separately for the insertion event's payload.
+    static func plan(deletingText: String, text: String) -> SyntheticReplacePlan {
+        plan(backspaceCount: deletingText.count, text: text)
+    }
+
+    private static func plan(backspaceCount: Int, text: String) -> SyntheticReplacePlan {
         let normalized = text.replacingOccurrences(of: "\r", with: "")
         return SyntheticReplacePlan(
-            backspaceCount: max(deletingUTF16Count, 0),
+            backspaceCount: backspaceCount,
             insertUTF16: Array(normalized.utf16)
         )
     }

@@ -2,6 +2,7 @@ import XCTest
 @testable import Cotabby
 
 #if canImport(FoundationModels)
+import FoundationModels
 
 /// Live Apple Intelligence drift and quality eval — deliberately NOT a CI test.
 ///
@@ -153,6 +154,191 @@ final class FoundationModelDriftEvalTests: XCTestCase {
 
     private static let allCases: [EvalCase] = chatDriftCases + emailCases + slackCases
         + codeCases + codeCommentCases + proseCases + midLineCases
+
+    /// Synthetic context stresses pair the unchanged raw renderer with the production bounded
+    /// engine over identical inputs. Facts sit at the beginning of each reference so excerpting can
+    /// retain them. Recall is reported separately from fit: a non-empty completion is not proof that
+    /// the model used context, and stochastic recall has no perfect-score assertion.
+    private struct ContextCase {
+        let name: String
+        let request: SuggestionRequest
+        let expectedRecall: String?
+        let isDuplicateSuffixControl: Bool
+
+        init(name: String, request: SuggestionRequest, expectedRecall: String?, isDuplicateSuffixControl: Bool = false) {
+            self.name = name
+            self.request = request
+            self.expectedRecall = expectedRecall
+            self.isDuplicateSuffixControl = isDuplicateSuffixControl
+        }
+    }
+
+    private static func combinedContextCases(contextSize: Int) -> [ContextCase] {
+        // Scale filler to the actual model window: macOS 27 currently reports 8192, while older
+        // releases use 4096. Keep English as a short recall control, then force real overflow in
+        // multilingual cases without moving their reference fact away from the retained head.
+        let scale = max(1, contextSize / 4096) * 3
+        return [
+            ContextCase(name: "english-reference", request: CotabbyTestFixtures.suggestionRequest(
+                prefixText: "The project codename is ", maxPredictionTokens: 32,
+                extendedContext: "The project codename is Cedar Lantern. " + String(repeating: "Reference details for project scheduling. ", count: 100),
+                visualContextSummary: String(repeating: "Meeting agenda and project schedule. ", count: 120)),
+                expectedRecall: "Cedar Lantern"),
+            ContextCase(name: "chinese-screen", request: CotabbyTestFixtures.suggestionRequest(
+                prefixText: "The project codename is ", maxPredictionTokens: 32,
+                extendedContext: String(repeating: "背景资料。", count: 200 * scale),
+                visualContextSummary: "Project codename: Silver Beacon. 项目代号是银色灯塔。 " + String(repeating: "项目会议记录与排期说明。", count: 300 * scale)),
+                expectedRecall: "Silver Beacon"),
+            ContextCase(name: "japanese-clipboard", request: CotabbyTestFixtures.suggestionRequest(
+                prefixText: "The passphrase for the meeting is ", maxPredictionTokens: 32,
+                extendedContext: String(repeating: "会議の参考資料です。", count: 140 * scale),
+                clipboardContext: "The meeting passphrase is Blue Comet. 合言葉は青い彗星です。 " + String(repeating: "会議の予定。", count: 140 * scale),
+                visualContextSummary: String(repeating: "今週の計画と会議記録。", count: 300 * scale)),
+                expectedRecall: "Blue Comet"),
+            ContextCase(name: "korean-history", request: CotabbyTestFixtures.suggestionRequest(
+                prefixText: "Our release codename is ", maxPredictionTokens: 32,
+                visualContextSummary: String(repeating: "이번주회의일정과업무기록입니다。", count: 250 * scale),
+                historyExamples: ["Our release codename is Quiet Harbor. " + String(repeating: "이전출시회의기록입니다。", count: 100 * scale)]),
+                expectedRecall: "Quiet Harbor"),
+            // Retain the original failing fixture: copying this existing suffix is correctly
+            // suppressed. It is a safety control, not a requirement to show duplicate ghost text.
+            ContextCase(name: "dense-editor-duplicate-suffix-control", request: CotabbyTestFixtures.suggestionRequest(
+                prefixText: String(repeating: "東京と大阪の報告書。대한민국보고서。ประชุมรายงาน。", count: 120 * scale) + "The next step is ",
+                trailingText: " before Friday." + String(repeating: "報告書。", count: 100 * scale), maxPredictionTokens: 32,
+                extendedContext: String(repeating: "Context references. ", count: 100 * scale),
+                visualContextSummary: String(repeating: "Additional project notes. ", count: 160 * scale)),
+                expectedRecall: nil, isDuplicateSuffixControl: true),
+            // The same oversized multilingual document now has a coherent caret-nearest checklist:
+            // the missing verb belongs before an existing object/deadline, so a useful continuation
+            // must bridge into the suffix rather than merely copy an unrelated date fragment.
+            ContextCase(name: "dense-editor-tail", request: CotabbyTestFixtures.suggestionRequest(
+                prefixText: String(repeating: "東京と大阪の報告書。대한민국보고서。ประชุมรายงาน。", count: 120 * scale)
+                    + "\n\nRelease checklist:\nValidation has passed. Packaging is next. The next step is to ",
+                trailingText: " the signed app before Friday.\n\n" + String(repeating: "報告書。", count: 100 * scale),
+                maxPredictionTokens: 32,
+                extendedContext: String(repeating: "Context references. ", count: 100 * scale),
+                visualContextSummary: String(repeating: "Additional project notes. ", count: 160 * scale)), expectedRecall: nil)
+        ]
+    }
+
+    func test_reportCombinedContextSuite() async throws {
+        let availability = FoundationModelAvailabilityService()
+        availability.refresh()
+        try XCTSkipUnless(availability.isAvailable, "Apple Intelligence unavailable: \(availability.userVisibleMessage)")
+        let model = try XCTUnwrap(availability.systemLanguageModel)
+        let engine = FoundationModelSuggestionEngine(availabilityService: availability)
+        let contextSize: Int
+        #if compiler(>=6.3)
+        if #available(macOS 26.4, *) { contextSize = model.contextSize } else { contextSize = 4096 }
+        #else
+        contextSize = 4096
+        #endif
+        let scenarios = Self.combinedContextCases(contextSize: contextSize)
+        var rawOverflows = 0
+        var rawFailures = 0
+        var rawRecalls = 0
+        var boundedRecalls = 0
+        var boundedNonempty = 0
+        for scenario in scenarios {
+            let request = scenario.request
+            let original = FoundationModelPromptRenderer.Content(request).payload
+            let responseReserve = max(1, request.maxPredictionTokens)
+            var countMeasurements = 0
+            var actualTokenizerCalls = 0
+            #if compiler(>=6.3)
+            var countedInstructions: (text: String, tokens: Int)?
+            #endif
+            let count: (FoundationModelPromptRenderer.Payload) async throws -> Int = { payload in
+                countMeasurements += 1
+                #if compiler(>=6.3)
+                if #available(macOS 26.4, *) {
+                    let instructions: Int
+                    if let countedInstructions, countedInstructions.text == payload.instructions {
+                        instructions = countedInstructions.tokens
+                    } else {
+                        instructions = try await model.tokenCount(for: Instructions(payload.instructions))
+                        actualTokenizerCalls += 1
+                        try Task.checkCancellation()
+                        countedInstructions = (payload.instructions, instructions)
+                    }
+                    let prompt = try await model.tokenCount(for: payload.prompt)
+                    actualTokenizerCalls += 1
+                    try Task.checkCancellation()
+                    return instructions + prompt
+                }
+                #endif
+                return payload.utf8Count
+            }
+            let originalUnits = try await count(original)
+            let overflowing = originalUnits + responseReserve + 128 > contextSize
+            if overflowing { rawOverflows += 1 }
+            let prepareStart = Date()
+            let payload = try await FoundationModelPromptRenderer.preparePayload(for: request,
+                contextSize: contextSize, count: count)
+            let preparationMilliseconds = Date().timeIntervalSince(prepareStart) * 1000
+            let boundedUnits = try await count(payload)
+            XCTAssertLessThanOrEqual(boundedUnits + responseReserve + 128, contextSize)
+            XCTAssertTrue(payload.prompt.contains("The next step is ") || payload.prompt.contains(request.prefixText), scenario.name)
+            var rawText = ""
+            var rawError = "none"
+            do {
+                let baselineSession = LanguageModelSession(model: model, instructions: original.instructions)
+                for try await snapshot in baselineSession.streamResponse(to: original.prompt,
+                    options: GenerationOptions(sampling: .greedy, temperature: 0.1, maximumResponseTokens: responseReserve)) {
+                    rawText = snapshot.content
+                    try Task.checkCancellation()
+                }
+            } catch {
+                rawFailures += 1
+                rawError = String(describing: error)
+            }
+            let baselineText = SuggestionTextNormalizer.normalizeDetailed(rawText, for: request,
+                promptEchoCandidates: [original.prompt]).text
+            let result: SuggestionResult
+            do {
+                result = try await engine.generateSuggestion(for: request)
+            } catch {
+                print("FM_CONTEXT_BOUNDED_ERROR name=\(scenario.name) error=\(String(describing: error))")
+                throw error
+            }
+            boundedNonempty += assertContextResult(result, for: scenario) ? 1 : 0
+            let baselineRecall = scenario.expectedRecall.map { baselineText.localizedCaseInsensitiveContains($0) } ?? false
+            let boundedRecall = scenario.expectedRecall.map { result.text.localizedCaseInsensitiveContains($0) } ?? false
+            if baselineRecall { rawRecalls += 1 }
+            if boundedRecall { boundedRecalls += 1 }
+            print("FM_CONTEXT_CASE name=\(scenario.name) raw_units=\(originalUnits) bounded_units=\(boundedUnits) " +
+                "context_size=\(contextSize) raw_overflow=\(overflowing) " +
+                "duplicate_suffix_control=\(scenario.isDuplicateSuffixControl) " +
+                "count_measurements=\(countMeasurements) actual_tokenizer_calls=\(actualTokenizerCalls) " +
+                "measurement=\(actualTokenizerCalls > 0 ? "apple_tokens" : "utf8_upper_bound") " +
+                "exact_count_prep_ms=\(Int(preparationMilliseconds.rounded())) " +
+                "raw_recall=\(baselineRecall) bounded_recall=\(boundedRecall) " +
+                "raw_error=\(rawError) raw=\(baselineText.debugDescription) bounded=\(result.text.debugDescription) " +
+                "bounded_raw=\(result.rawText.debugDescription) bounded_suppression=\(result.suppressionReason ?? "none")")
+        }
+        print("FM_CONTEXT_SUMMARY cases=\(scenarios.count) raw_overflows=\(rawOverflows) " +
+            "raw_failures=\(rawFailures) raw_recall=\(rawRecalls)/4 bounded_recall=\(boundedRecalls)/4 " +
+            "intended_nonempty=\(boundedNonempty)/5 duplicate_suffix_controls=1")
+        XCTAssertGreaterThan(rawOverflows, 0, "Stress cases must actually exceed the unbounded combined window")
+        XCTAssertEqual(boundedNonempty, 5, "All five intended-continuation cases must produce text")
+    }
+
+    /// Counts nonempty intended completions, not semantic quality. The safety control may be empty only
+    /// when the model produced a real suffix copy and the normalizer rejected that specific copy.
+    private func assertContextResult(_ result: SuggestionResult, for scenario: ContextCase) -> Bool {
+        let isNonempty = !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if scenario.isDuplicateSuffixControl {
+            if !isNonempty {
+                XCTAssertFalse(result.rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    "The safety control must have real output to suppress")
+                XCTAssertEqual(result.suppressionReason, "duplicatesTrailingText",
+                    "An unrelated empty generation is not evidence of duplicate-suffix protection")
+            }
+            return false
+        }
+        XCTAssertTrue(isNonempty, "\(scenario.name): \(result.suppressionReason ?? "no suppression reason")")
+        return isNonempty
+    }
 
     /// Phrases that mark a continuation as out-of-character. Matched case-insensitively anywhere
     /// in the output, so a continuation that mentions one inside a longer thought still flags.
@@ -334,6 +520,10 @@ final class FoundationModelDriftEvalTests: XCTestCase {
         return true
     }
 #else
+    func test_reportCombinedContextSuite() throws {
+        throw XCTSkip("Live combined-context eval is local-only; enable RUN_FM_EVAL.")
+    }
+
     func test_reportEvalSuite() throws {
         throw XCTSkip(
             "Live FM eval is local-only. Run with "

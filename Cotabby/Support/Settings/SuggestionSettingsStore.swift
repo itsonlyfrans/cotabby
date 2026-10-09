@@ -47,6 +47,39 @@ struct SuggestionSettingsStore {
     static let defaultGhostTextSizeMultiplier: Double = 1.0
     static let ghostTextSizeMultiplierStep: Double = 0.1
 
+    /// User-adjustable floor and ceiling for the caret-approximated ghost-text size, in points.
+    ///
+    /// These bound the size *after* `ghostTextSizeMultiplier` scales it, so they are absolute: no
+    /// multiplier setting renders ghost text outside them. They exist as their own controls because
+    /// the multiplier cannot express what they express: it rescales every host proportionally,
+    /// whereas these clamp the outliers — a host whose caret geometry reads far smaller or larger
+    /// than its real text.
+    ///
+    /// The defaults deliberately differ from the 14pt/24pt the overlay used when these were
+    /// hard-coded. A 24pt ceiling is reachable by ordinary documents (20pt text at 120% zoom renders
+    /// near 24pt, and Word at 200% draws 12pt text at 24pt), silently shrinking anything larger; a
+    /// 14pt floor forced ghost text larger than the surrounding text in hosts that render at
+    /// 11-13pt.
+    ///
+    /// The two controls have deliberately different ranges. A floor above ~24pt would force ghost
+    /// text larger than ordinary body text in most hosts, and a ceiling below ~16pt would clamp
+    /// ordinary body text back down, so neither control is allowed into the other's territory by
+    /// range alone. `SuggestionSettingsModel` additionally keeps floor <= ceiling, which range
+    /// clamping cannot do because each value is stored independently. The floor's minimum equals
+    /// `GhostFontSizeLimits.absoluteMinimumPointSize`, the legibility backstop beneath it, so every
+    /// value the slider offers actually takes effect.
+    static let defaultGhostFontSizeFloor: Double = 11
+    static let minimumGhostFontSizeFloor: Double = 9
+    static let maximumGhostFontSizeFloor: Double = 24
+
+    static let defaultGhostFontSizeCeiling: Double = 48
+    static let minimumGhostFontSizeCeiling: Double = 16
+    static let maximumGhostFontSizeCeiling: Double = 96
+
+    /// Whole points: sub-point precision is invisible in rendered ghost text and only makes the
+    /// slider fiddly.
+    static let ghostFontSizeStep: Double = 1
+
     /// New installs start with fades enabled; the renderer still yields to macOS Reduce Motion, so
     /// this product default never overrides the user's accessibility preference.
     static let defaultFadeInSuggestions = true
@@ -83,13 +116,17 @@ struct SuggestionSettingsStore {
     private static let pauseStateDefaultsKey = "cotabbySuggestionPauseState"
     private static let disabledAppRulesDefaultsKey = "cotabbyDisabledAppRules"
     private static let perAppShortcutOverridesDefaultsKey = "cotabbyPerAppShortcutOverrides"
+    private static let doubleTapFullAcceptanceDefaultsKey = "cotabbyDoubleTapAcceptsEntireSuggestion"
     private static let suggestInIntegratedTerminalsDefaultsKey = "cotabbySuggestInIntegratedTerminals"
     private static let showCaretIndicatorDefaultsKey = "cotabbyShowCaretIndicator"
     private static let selectedIndicatorModeDefaultsKey = "cotabbySelectedIndicatorMode"
+    private static let showDevelopmentDebugOverlaysDefaultsKey = "cotabbyShowDevelopmentDebugOverlays"
     private static let showAcceptanceHintDefaultsKey = "cotabbyShowAcceptanceHint"
     private static let customSuggestionTextColorHexDefaultsKey = "cotabbyCustomSuggestionTextColorHex"
     private static let ghostTextOpacityDefaultsKey = "cotabbyGhostTextOpacity"
     private static let ghostTextSizeMultiplierDefaultsKey = "cotabbyGhostTextSizeMultiplier"
+    private static let ghostFontSizeFloorDefaultsKey = "cotabbyGhostFontSizeFloor"
+    private static let ghostFontSizeCeilingDefaultsKey = "cotabbyGhostFontSizeCeiling"
     private static let selectedEngineDefaultsKey = "cotabbySelectedEngine"
     private static let openAICompatibleBaseURLDefaultsKey = "cotabbyOpenAICompatibleBaseURL"
     private static let openAICompatibleModelNameDefaultsKey = "cotabbyOpenAICompatibleModelName"
@@ -112,6 +149,7 @@ struct SuggestionSettingsStore {
     private static let suppressCompletionsOnTypoDefaultsKey = "cotabbySuppressCompletionsOnTypo"
     private static let offerTypoCorrectionsDefaultsKey = "cotabbyOfferTypoCorrections"
     private static let spellingDictionaryCodesDefaultsKey = "cotabbyEnabledSpellingDictionaryCodes"
+    private static let personalVocabularyWordsDefaultsKey = "cotabbyPersonalVocabularyWords"
     private static let automaticallyFixTyposDefaultsKey = "cotabbyAutomaticallyFixTypos"
     private static let performanceTrackingEnabledDefaultsKey = "cotabbyPerformanceTrackingEnabled"
     private static let lowPowerModeAutoDisableDefaultsKey = "cotabbyLowPowerModeAutoDisableEnabled"
@@ -129,12 +167,15 @@ struct SuggestionSettingsStore {
     private static let debounceMillisecondsDefaultsKey = "cotabbyDebounceMilliseconds"
     private static let focusPollIntervalMillisecondsDefaultsKey = "cotabbyFocusPollIntervalMilliseconds"
     private static let multiLineEnabledDefaultsKey = "cotabbyMultiLineEnabled"
+    private static let suggestWithinWordsDefaultsKey = "cotabbySuggestWithinWords"
+    private static let showFollowingWordsDefaultsKey = "cotabbyShowFollowingWords"
     private static let emojiPickerEnabledDefaultsKey = "cotabbyEmojiPickerEnabled"
     private static let macroExpansionEnabledDefaultsKey = "cotabbyMacroExpansionEnabled"
     private static let preferredEmojiSkinToneDefaultsKey = "cotabbyPreferredEmojiSkinTone"
     private static let preferredEmojiGenderDefaultsKey = "cotabbyPreferredEmojiGender"
     private static let autoAcceptTrailingPunctuationDefaultsKey = "cotabbyAutoAcceptTrailingPunctuation"
     private static let addSpaceAfterAcceptDefaultsKey = "cotabbyAddSpaceAfterAccept"
+    private static let predictAheadWhileTypingDefaultsKey = "cotabbyPredictAheadWhileTyping"
     private static let streamWhileGeneratingDefaultsKey = "cotabbyStreamSuggestionsWhileGenerating"
     private static let fadeInSuggestionsDefaultsKey = "cotabbyFadeInSuggestions"
     private static let fadeInDurationSecondsDefaultsKey = "cotabbyFadeInDurationSeconds"
@@ -150,6 +191,8 @@ struct SuggestionSettingsStore {
     private static let globalToggleKeyLabelDefaultsKey = "cotabbyGlobalToggleKeyLabel"
     private static let acceptanceGranularityDefaultsKey = "cotabbyAcceptanceGranularity"
 
+    private static let appleLanguageFallbackEnabledDefaultsKey = "cotabbyAppleLanguageFallbackEnabled"
+    private static let keepFallbackModelLoadedDefaultsKey = "cotabbyKeepFallbackModelLoaded"
     private static let powerModelSwitchingEnabledDefaultsKey = "cotabbyPowerBasedModelSwitchingEnabled"
     private static let batteryEngineDefaultsKey = "cotabbyBatteryEngine"
     private static let batteryModelFilenameDefaultsKey = "cotabbyBatteryModelFilename"
@@ -170,13 +213,17 @@ struct SuggestionSettingsStore {
         pauseStateDefaultsKey,
         disabledAppRulesDefaultsKey,
         perAppShortcutOverridesDefaultsKey,
+        doubleTapFullAcceptanceDefaultsKey,
         suggestInIntegratedTerminalsDefaultsKey,
         showCaretIndicatorDefaultsKey,
         selectedIndicatorModeDefaultsKey,
         showAcceptanceHintDefaultsKey,
+        showDevelopmentDebugOverlaysDefaultsKey,
         customSuggestionTextColorHexDefaultsKey,
         ghostTextOpacityDefaultsKey,
         ghostTextSizeMultiplierDefaultsKey,
+        ghostFontSizeFloorDefaultsKey,
+        ghostFontSizeCeilingDefaultsKey,
         selectedEngineDefaultsKey,
         openAICompatibleBaseURLDefaultsKey,
         openAICompatibleModelNameDefaultsKey,
@@ -192,6 +239,7 @@ struct SuggestionSettingsStore {
         offerTypoCorrectionsDefaultsKey,
         spellingDictionaryCodesDefaultsKey,
         automaticallyFixTyposDefaultsKey,
+        personalVocabularyWordsDefaultsKey,
         performanceTrackingEnabledDefaultsKey,
         lowPowerModeAutoDisableDefaultsKey,
         menuBarWordCountVisibleDefaultsKey,
@@ -204,6 +252,8 @@ struct SuggestionSettingsStore {
         debounceMillisecondsDefaultsKey,
         focusPollIntervalMillisecondsDefaultsKey,
         multiLineEnabledDefaultsKey,
+        suggestWithinWordsDefaultsKey,
+        showFollowingWordsDefaultsKey,
         emojiPickerEnabledDefaultsKey,
         macroExpansionEnabledDefaultsKey,
         preferredEmojiSkinToneDefaultsKey,
@@ -211,6 +261,7 @@ struct SuggestionSettingsStore {
         autoAcceptTrailingPunctuationDefaultsKey,
         addSpaceAfterAcceptDefaultsKey,
         streamWhileGeneratingDefaultsKey,
+        predictAheadWhileTypingDefaultsKey,
         fadeInSuggestionsDefaultsKey,
         fadeInDurationSecondsDefaultsKey,
         fadeInDurationDefaultRevisionDefaultsKey,
@@ -225,6 +276,8 @@ struct SuggestionSettingsStore {
         globalToggleKeyLabelDefaultsKey,
         acceptanceGranularityDefaultsKey,
         powerModelSwitchingEnabledDefaultsKey,
+        appleLanguageFallbackEnabledDefaultsKey,
+        keepFallbackModelLoadedDefaultsKey,
         batteryEngineDefaultsKey,
         batteryModelFilenameDefaultsKey,
         batteryEndpointModelNameDefaultsKey,
@@ -249,6 +302,10 @@ struct SuggestionSettingsStore {
         let resolvedPauseState = persistedPauseState?.activeState()
         let resolvedDisabledAppRules = loadDisabledAppRules()
         let resolvedPerAppShortcutOverrides = loadPerAppShortcutOverrides()
+        // Off by default: a fast second Tab has always accepted one more word, and turning it into a
+        // whole-suggestion accept is an opt-in change to that muscle memory.
+        let resolvedDoubleTapAcceptsEntireSuggestion =
+            userDefaults.object(forKey: Self.doubleTapFullAcceptanceDefaultsKey) as? Bool ?? false
         let resolvedShowIndicator: Bool = if let modeString = userDefaults.string(
             forKey: Self.selectedIndicatorModeDefaultsKey
         ) {
@@ -275,6 +332,8 @@ struct SuggestionSettingsStore {
             } else {
                 Self.clampedGhostTextSizeMultiplier(userDefaults.double(forKey: Self.ghostTextSizeMultiplierDefaultsKey))
             }
+        let ghostFontSizeBounds = resolvedGhostFontSizeBounds()
+
         let resolvedEngine = userDefaults
             .string(forKey: Self.selectedEngineDefaultsKey)
             .flatMap(SuggestionEngineKind.init(rawValue:))
@@ -412,6 +471,11 @@ struct SuggestionSettingsStore {
         }()
 
         let resolvedMultiLineEnabled = userDefaults.object(forKey: Self.multiLineEnabledDefaultsKey) as? Bool ?? false
+        // Preserve word-completion behavior for existing installs while allowing users to wait
+        // until a word boundary before a new suggestion is generated.
+        let resolvedSuggestWithinWords = userDefaults.object(forKey: Self.suggestWithinWordsDefaultsKey) as? Bool ?? true
+        // Existing installs keep the phrase preview; users can choose a quieter word-at-a-time view.
+        let resolvedShowFollowingWords = userDefaults.object(forKey: Self.showFollowingWordsDefaultsKey) as? Bool ?? true
         let resolvedEmojiPickerEnabled = userDefaults.object(forKey: Self.emojiPickerEnabledDefaultsKey) as? Bool ?? true
         let resolvedMacroExpansionEnabled = userDefaults.object(forKey: Self.macroExpansionEnabledDefaultsKey) as? Bool ?? true
         let resolvedPreferredEmojiSkinTone = userDefaults.string(forKey: Self.preferredEmojiSkinToneDefaultsKey)
@@ -424,8 +488,10 @@ struct SuggestionSettingsStore {
         // trailing space is opt-in from Settings.
         let resolvedAddSpaceAfterAccept =
             userDefaults.object(forKey: Self.addSpaceAfterAcceptDefaultsKey) as? Bool ?? false
-        // Defaults to false so the suggestion appears once, fully formed; token-by-token streaming
-        // is opt-in from Settings.
+        // Missing keys opt existing installations into prediction reuse; an explicit false survives reload.
+        let resolvedPredictAheadWhileTyping =
+            userDefaults.object(forKey: Self.predictAheadWhileTypingDefaultsKey) as? Bool ?? true
+        // Streaming is opt-in; prediction reuse works independently when a user hides partials.
         let resolvedStreamSuggestionsWhileGenerating =
             userDefaults.object(forKey: Self.streamWhileGeneratingDefaultsKey) as? Bool ?? false
         // Defaults to true: the gentle fade-in is the intended out-of-box feel. Users who prefer
@@ -495,6 +561,11 @@ struct SuggestionSettingsStore {
 
         let resolvedPowerBasedModelSwitchingEnabled =
             userDefaults.object(forKey: Self.powerModelSwitchingEnabledDefaultsKey) as? Bool ?? false
+        // On by default: falling back is what Cotabby has always done for unsupported languages.
+        let resolvedAppleLanguageFallbackEnabled =
+            userDefaults.object(forKey: Self.appleLanguageFallbackEnabledDefaultsKey) as? Bool ?? true
+        let resolvedKeepsFallbackModelLoaded =
+            userDefaults.object(forKey: Self.keepFallbackModelLoadedDefaultsKey) as? Bool ?? false
         let resolvedBatteryEngine = userDefaults.string(forKey: Self.batteryEngineDefaultsKey)
             .flatMap(SuggestionEngineKind.init(rawValue:)) ?? .llamaOpenSource
         let resolvedBatteryModelFilename = userDefaults.string(forKey: Self.batteryModelFilenameDefaultsKey) ?? ""
@@ -526,7 +597,9 @@ struct SuggestionSettingsStore {
                 batteryEndpointModelName: resolvedBatteryEndpointModelName,
                 pluggedInEngine: resolvedPluggedInEngine,
                 pluggedInModelFilename: resolvedPluggedInModelFilename,
-                pluggedInEndpointModelName: resolvedPluggedInEndpointModelName
+                pluggedInEndpointModelName: resolvedPluggedInEndpointModelName,
+                isAppleLanguageFallbackEnabled: resolvedAppleLanguageFallbackEnabled,
+                keepsFallbackModelLoaded: resolvedKeepsFallbackModelLoaded
             ),
             completion: SuggestionCompletionSettings(
                 selectedWordCountPreset: resolvedWordCountPreset,
@@ -536,9 +609,12 @@ struct SuggestionSettingsStore {
                 debounceMilliseconds: resolvedDebounceMilliseconds,
                 focusPollIntervalMilliseconds: resolvedFocusPollIntervalMilliseconds,
                 isMultiLineEnabled: resolvedMultiLineEnabled,
+                suggestWithinWords: resolvedSuggestWithinWords,
+                showFollowingWords: resolvedShowFollowingWords,
                 autoAcceptTrailingPunctuation: resolvedAutoAcceptTrailingPunctuation,
                 addSpaceAfterAccept: resolvedAddSpaceAfterAccept,
                 streamSuggestionsWhileGenerating: resolvedStreamSuggestionsWhileGenerating,
+                predictAheadWhileTyping: resolvedPredictAheadWhileTyping,
                 acceptanceGranularity: resolvedAcceptanceGranularity
             ),
             context: SuggestionContextSettings(
@@ -554,7 +630,10 @@ struct SuggestionSettingsStore {
                 suppressCompletionsOnTypo: resolvedSuppressCompletionsOnTypo,
                 offerTypoCorrections: resolvedOfferTypoCorrections,
                 enabledSpellingDictionaryCodes: resolvedEnabledSpellingDictionaryCodes,
-                automaticallyFixTypos: resolvedAutomaticallyFixTypos
+                automaticallyFixTypos: resolvedAutomaticallyFixTypos,
+                personalVocabularyWords: PersonalVocabulary.normalize(
+                    userDefaults.stringArray(forKey: Self.personalVocabularyWordsDefaultsKey) ?? []
+                )
             ),
             presentation: SuggestionPresentationSettings(
                 showIndicator: resolvedShowIndicator,
@@ -562,11 +641,14 @@ struct SuggestionSettingsStore {
                 customSuggestionTextColorHex: resolvedCustomSuggestionTextColorHex,
                 ghostTextOpacity: resolvedGhostTextOpacity,
                 ghostTextSizeMultiplier: resolvedGhostTextSizeMultiplier,
+                ghostFontSizeFloor: ghostFontSizeBounds.floor,
+                ghostFontSizeCeiling: ghostFontSizeBounds.ceiling,
                 isMenuBarIconVisible: resolvedMenuBarIconVisible,
                 isMenuBarWordCountVisible: resolvedMenuBarWordCountVisible,
                 mirrorPreference: resolvedMirrorPreference,
                 fadeInSuggestions: resolvedFadeInSuggestions,
-                fadeInDurationSeconds: resolvedFadeInDurationSeconds
+                fadeInDurationSeconds: resolvedFadeInDurationSeconds,
+                showDevelopmentDebugOverlays: userDefaults.bool(forKey: Self.showDevelopmentDebugOverlaysDefaultsKey)
             ),
             inlineFeatures: SuggestionInlineFeatureSettings(
                 isEmojiPickerEnabled: resolvedEmojiPickerEnabled,
@@ -590,7 +672,8 @@ struct SuggestionSettingsStore {
                     modifiers: resolvedGlobalToggleKeyModifiers,
                     label: resolvedGlobalToggleKeyLabel
                 ),
-                perAppOverrides: resolvedPerAppShortcutOverrides
+                perAppOverrides: resolvedPerAppShortcutOverrides,
+                doubleTapAcceptsEntireSuggestion: resolvedDoubleTapAcceptsEntireSuggestion
             )
         )
 
@@ -602,9 +685,12 @@ struct SuggestionSettingsStore {
         saveSuggestInIntegratedTerminals(data.suggestInIntegratedTerminals)
         saveShowIndicator(data.showIndicator)
         saveShowAcceptanceHint(data.showAcceptanceHint)
+        saveShowDevelopmentDebugOverlays(data.presentation.showDevelopmentDebugOverlays)
         saveCustomSuggestionTextColorHex(data.customSuggestionTextColorHex)
         saveGhostTextOpacity(data.ghostTextOpacity)
         saveGhostTextSizeMultiplier(data.ghostTextSizeMultiplier)
+        saveGhostFontSizeFloor(data.ghostFontSizeFloor)
+        saveGhostFontSizeCeiling(data.ghostFontSizeCeiling)
         saveSelectedEngine(data.selectedEngine)
         saveOpenAICompatibleBaseURL(data.openAICompatibleBaseURL)
         saveOpenAICompatibleModelName(data.openAICompatibleModelName)
@@ -619,6 +705,7 @@ struct SuggestionSettingsStore {
         saveOfferTypoCorrections(data.offerTypoCorrections)
         saveEnabledSpellingDictionaryCodes(data.enabledSpellingDictionaryCodes)
         saveAutomaticallyFixTypos(data.automaticallyFixTypos)
+        savePersonalVocabularyWords(data.personalVocabularyWords)
         savePerformanceTrackingEnabled(data.isPerformanceTrackingEnabled)
         saveLowPowerModeAutoDisableEnabled(data.isLowPowerModeAutoDisableEnabled)
         saveMenuBarIconVisible(data.isMenuBarIconVisible)
@@ -631,6 +718,8 @@ struct SuggestionSettingsStore {
         saveDebounceMilliseconds(data.debounceMilliseconds)
         saveFocusPollIntervalMilliseconds(data.focusPollIntervalMilliseconds)
         saveMultiLineEnabled(data.isMultiLineEnabled)
+        saveSuggestWithinWords(data.suggestWithinWords)
+        saveShowFollowingWords(data.showFollowingWords)
         saveEmojiPickerEnabled(data.isEmojiPickerEnabled)
         saveMacroExpansionEnabled(data.isMacroExpansionEnabled)
         savePreferredEmojiSkinTone(data.preferredEmojiSkinTone)
@@ -638,6 +727,7 @@ struct SuggestionSettingsStore {
         saveAutoAcceptTrailingPunctuation(data.autoAcceptTrailingPunctuation)
         saveAddSpaceAfterAccept(data.addSpaceAfterAccept)
         saveStreamSuggestionsWhileGenerating(data.streamSuggestionsWhileGenerating)
+        savePredictAheadWhileTyping(data.predictAheadWhileTyping)
         saveFadeInSuggestions(data.fadeInSuggestions)
         saveFadeInDurationSeconds(data.fadeInDurationSeconds)
         saveAcceptanceKey(
@@ -656,8 +746,11 @@ struct SuggestionSettingsStore {
             label: data.globalToggleKeyLabel
         )
         savePerAppShortcutOverrides(data.perAppShortcutOverrides)
+        saveDoubleTapAcceptsEntireSuggestion(data.doubleTapAcceptsEntireSuggestion)
         saveAcceptanceGranularity(data.acceptanceGranularity)
         savePowerBasedModelSwitchingEnabled(data.isPowerBasedModelSwitchingEnabled)
+        saveAppleLanguageFallbackEnabled(data.isAppleLanguageFallbackEnabled)
+        saveKeepsFallbackModelLoaded(data.keepsFallbackModelLoaded)
         saveBatteryEngine(data.batteryEngine)
         saveBatteryModelFilename(data.batteryModelFilename)
         saveBatteryEndpointModelName(data.batteryEndpointModelName)
@@ -719,6 +812,10 @@ struct SuggestionSettingsStore {
         }
     }
 
+    func saveDoubleTapAcceptsEntireSuggestion(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: Self.doubleTapFullAcceptanceDefaultsKey)
+    }
+
     /// Removing the key for an empty list keeps reset state identical to a fresh install.
     func savePerAppShortcutOverrides(_ overrides: [PerAppShortcutOverride]) {
         guard !overrides.isEmpty else {
@@ -735,6 +832,10 @@ struct SuggestionSettingsStore {
         let mode: ActivationIndicatorMode = show ? .fieldEdgeIcon : .hidden
         userDefaults.set(mode.rawValue, forKey: Self.selectedIndicatorModeDefaultsKey)
         userDefaults.set(show, forKey: Self.showCaretIndicatorDefaultsKey)
+    }
+
+    func saveShowDevelopmentDebugOverlays(_ show: Bool) {
+        userDefaults.set(show, forKey: Self.showDevelopmentDebugOverlaysDefaultsKey)
     }
 
     func saveShowAcceptanceHint(_ show: Bool) {
@@ -757,6 +858,14 @@ struct SuggestionSettingsStore {
         userDefaults.set(multiplier, forKey: Self.ghostTextSizeMultiplierDefaultsKey)
     }
 
+    func saveGhostFontSizeFloor(_ points: Double) {
+        userDefaults.set(points, forKey: Self.ghostFontSizeFloorDefaultsKey)
+    }
+
+    func saveGhostFontSizeCeiling(_ points: Double) {
+        userDefaults.set(points, forKey: Self.ghostFontSizeCeilingDefaultsKey)
+    }
+
     func saveSelectedEngine(_ engine: SuggestionEngineKind) {
         userDefaults.set(engine.rawValue, forKey: Self.selectedEngineDefaultsKey)
     }
@@ -771,6 +880,14 @@ struct SuggestionSettingsStore {
 
     func saveOpenAICompatibleAPIMode(_ mode: OpenAICompatibleAPIMode) {
         userDefaults.set(mode.rawValue, forKey: Self.openAICompatibleAPIModeDefaultsKey)
+    }
+
+    func saveAppleLanguageFallbackEnabled(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: Self.appleLanguageFallbackEnabledDefaultsKey)
+    }
+
+    func saveKeepsFallbackModelLoaded(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: Self.keepFallbackModelLoadedDefaultsKey)
     }
 
     func savePowerBasedModelSwitchingEnabled(_ enabled: Bool) {
@@ -842,6 +959,15 @@ struct SuggestionSettingsStore {
         )
     }
 
+    func savePersonalVocabularyWords(_ words: [String]) {
+        let normalized = PersonalVocabulary.normalize(words)
+        if normalized.isEmpty {
+            userDefaults.removeObject(forKey: Self.personalVocabularyWordsDefaultsKey)
+        } else {
+            userDefaults.set(normalized, forKey: Self.personalVocabularyWordsDefaultsKey)
+        }
+    }
+
     func saveAutomaticallyFixTypos(_ enabled: Bool) {
         userDefaults.set(enabled, forKey: Self.automaticallyFixTyposDefaultsKey)
     }
@@ -898,6 +1024,14 @@ struct SuggestionSettingsStore {
         userDefaults.set(enabled, forKey: Self.multiLineEnabledDefaultsKey)
     }
 
+    func saveSuggestWithinWords(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: Self.suggestWithinWordsDefaultsKey)
+    }
+
+    func saveShowFollowingWords(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: Self.showFollowingWordsDefaultsKey)
+    }
+
     func saveEmojiPickerEnabled(_ enabled: Bool) {
         userDefaults.set(enabled, forKey: Self.emojiPickerEnabledDefaultsKey)
     }
@@ -920,6 +1054,10 @@ struct SuggestionSettingsStore {
 
     func saveAddSpaceAfterAccept(_ enabled: Bool) {
         userDefaults.set(enabled, forKey: Self.addSpaceAfterAcceptDefaultsKey)
+    }
+
+    func savePredictAheadWhileTyping(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: Self.predictAheadWhileTypingDefaultsKey)
     }
 
     func saveStreamSuggestionsWhileGenerating(_ enabled: Bool) {
@@ -1092,6 +1230,47 @@ struct SuggestionSettingsStore {
         }
 
         return min(maximumGhostTextSizeMultiplier, max(minimumGhostTextSizeMultiplier, value))
+    }
+
+    static func clampedGhostFontSizeFloor(_ value: Double) -> Double {
+        guard value.isFinite else {
+            return defaultGhostFontSizeFloor
+        }
+
+        return min(maximumGhostFontSizeFloor, max(minimumGhostFontSizeFloor, value))
+    }
+
+    static func clampedGhostFontSizeCeiling(_ value: Double) -> Double {
+        guard value.isFinite else {
+            return defaultGhostFontSizeCeiling
+        }
+
+        return min(maximumGhostFontSizeCeiling, max(minimumGhostFontSizeCeiling, value))
+    }
+
+    /// Reads the ghost-size floor and ceiling, repairing an inverted pair.
+    ///
+    /// The two bounds live in separate keys written one at a time, so a crash between the writes can
+    /// persist floor > ceiling. `GhostFontSizeLimits` would then clamp with an inverted range and the
+    /// ceiling would silently win, so the pair is ordered here rather than trusted. Kept out of
+    /// `load()` so that function's branch count stays under the complexity limit; the resolution is
+    /// self-contained, which makes it a natural thing to lift out.
+    private func resolvedGhostFontSizeBounds() -> (floor: Double, ceiling: Double) {
+        let storedFloor: Double =
+            if userDefaults.object(forKey: Self.ghostFontSizeFloorDefaultsKey) == nil {
+                Self.defaultGhostFontSizeFloor
+            } else {
+                Self.clampedGhostFontSizeFloor(userDefaults.double(forKey: Self.ghostFontSizeFloorDefaultsKey))
+            }
+        let storedCeiling: Double =
+            if userDefaults.object(forKey: Self.ghostFontSizeCeilingDefaultsKey) == nil {
+                Self.defaultGhostFontSizeCeiling
+            } else {
+                Self.clampedGhostFontSizeCeiling(userDefaults.double(forKey: Self.ghostFontSizeCeilingDefaultsKey))
+            }
+
+        let repairedCeiling = max(storedCeiling, storedFloor)
+        return (min(storedFloor, repairedCeiling), repairedCeiling)
     }
 
     static func clampedFadeInDuration(_ value: Double) -> Double {

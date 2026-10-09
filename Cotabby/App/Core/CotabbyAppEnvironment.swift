@@ -40,6 +40,7 @@ final class CotabbyAppEnvironment {
     let huggingFaceSearchService: HuggingFaceSearchService
     let performanceMetricsStore: PerformanceMetricsStore
     let qualityMetricsStore: SuggestionQualityMetricsStore
+    let typingHistoryStore: TypingHistoryStore
     let settingsCoordinator: SettingsCoordinator
     let activationIndicatorController: ActivationIndicatorController
     let focusDebugOverlayController: FocusDebugOverlayController?
@@ -103,8 +104,7 @@ final class CotabbyAppEnvironment {
                 return calendarAccessibilityCaptureGuard.shouldSuppressCapture(
                     for: bundleIdentifier
                 )
-            },
-            publishesPollingEvents: FocusDebugOverlayController.isEnabled
+            }
         )
         // The snapshot is poll-based, so after a fast app switch the closure may briefly
         // evaluate against the previous app's identity until the next AX poll fires. This
@@ -164,7 +164,11 @@ final class CotabbyAppEnvironment {
         suggestionInserter.isComposingIMEActiveProvider = { [weak keyboardInputSourceMonitor] in
             keyboardInputSourceMonitor?.isComposingIMEActive ?? false
         }
-        let overlayController = OverlayController(suggestionSettings: suggestionSettings)
+        let overlayController = OverlayController(
+            suggestionSettings: suggestionSettings,
+            baselineCalibrator: HostBaselineCalibrator(),
+            faceMemoryDefaults: .standard
+        )
         let activationIndicatorController = ActivationIndicatorController()
         let clipboardContextProvider = ClipboardContextProvider()
         let clipboardRelevanceFilter = ClipboardRelevanceFilter()
@@ -193,7 +197,7 @@ final class CotabbyAppEnvironment {
         CotabbyLogger.app.info("Foundation model engine unavailable (SDK)")
         #endif
 
-        let suggestionEngine: any SuggestionGenerating = SuggestionEngineRouter(
+        let routedEngine: any SuggestionGenerating = SuggestionEngineRouter(
             suggestionSettings: suggestionSettings,
             foundationModelEngine: foundationModelEngine,
             llamaEngine: LlamaSuggestionEngine(runtimeManager: runtimeManager),
@@ -218,6 +222,22 @@ final class CotabbyAppEnvironment {
                 suggestionSettings?.openAICompatibleModelName.nonEmpty
             }
         )
+        // Under `-cotabby-debug` with `cotabbyDebugForcedSuggestion` set, every request answers with
+        // that fixed text so ghost placement can be measured deterministically without a model.
+        // Typing history owns its own encrypted archive. Inside the XCTest host it starts empty and
+        // never opens the real archive or Keychain item, so tests cannot read or overwrite it.
+        let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let typingHistoryStore = TypingHistoryStore(loadsArchive: !isTestHost)
+        // Phrase shortcuts answer from history before the router runs. The live engine kind is
+        // read per request so a power-source switch to the endpoint stops shortcuts immediately.
+        let historyAwareEngine = TypingHistoryPhraseEngine(
+            wrapping: routedEngine,
+            history: typingHistoryStore,
+            engineKind: { [weak suggestionSettings] in suggestionSettings?.selectedEngine ?? .openAICompatible }
+        )
+        let suggestionEngine: any SuggestionGenerating = DebugForcedSuggestionEngine.isConfigured()
+            ? DebugForcedSuggestionEngine(wrapping: historyAwareEngine)
+            : historyAwareEngine
 
         // Per-user emoji recents/frequency. Built before the settings coordinator so the
         // "Clear History" control can reach it, and before the picker which reads and writes it.
@@ -239,7 +259,8 @@ final class CotabbyAppEnvironment {
             onShowWelcome: { [weak welcomeCoordinator] in
                 welcomeCoordinator?.showWelcome()
             },
-            clearEmojiHistory: { emojiUsageStore.clear() }
+            clearEmojiHistory: { emojiUsageStore.clear() },
+            typingHistoryStore: typingHistoryStore
         )
 
         let interactionState = SuggestionInteractionState()
@@ -274,7 +295,8 @@ final class CotabbyAppEnvironment {
             spellChecker: spellChecker,
             symSpellCorrector: symSpellCorrector,
             spellingLanguageResolver: SpellingLanguageResolver(),
-            qualityMetricsStore: qualityMetricsStore
+            qualityMetricsStore: qualityMetricsStore,
+            historyProvider: typingHistoryStore
         )
 
         // The emoji picker is a sibling to the suggestion coordinator. It reuses the input monitor,
@@ -344,11 +366,38 @@ final class CotabbyAppEnvironment {
         self.huggingFaceSearchService = huggingFaceSearchService
         self.performanceMetricsStore = performanceMetricsStore
         self.qualityMetricsStore = qualityMetricsStore
+        self.typingHistoryStore = typingHistoryStore
         self.settingsCoordinator = settingsCoordinator
         self.activationIndicatorController = activationIndicatorController
-        self.focusDebugOverlayController = FocusDebugOverlayController.isEnabled
+        self.focusDebugOverlayController = CotabbyDebugOptions.areOverlaysAvailable
             ? FocusDebugOverlayController()
             : nil
+
+        // Recording reads every focus snapshot; the store ignores them unless recording is on and
+        // the text changed. The same rule that decides whether Cotabby suggests (on, not paused,
+        // app or site not disabled, not paused for Low Power Mode) decides where recording may
+        // happen, so history is only collected where Cotabby is active. The store checks the
+        // field's capability, secure fields, and terminals itself.
+        focusModel.$snapshot
+            .sink { [weak typingHistoryStore, weak suggestionSettings, weak permissionManager, weak lowPowerModeMonitor] snapshot in
+                guard let typingHistoryStore, let suggestionSettings, let permissionManager, let lowPowerModeMonitor else { return }
+                typingHistoryStore.observe(snapshot) {
+                    let settings = suggestionSettings.snapshot
+                    return SuggestionAvailabilityEvaluator.disabledReason(
+                        globallyEnabled: settings.isGloballyEnabled,
+                        temporarilyPaused: settings.isTemporarilyPaused,
+                        isLowPowerModeActive: lowPowerModeMonitor.isLowPowerModeEnabled,
+                        isLowPowerModeAutoDisableEnabled: settings.isLowPowerModeAutoDisableEnabled,
+                        disabledAppBundleIdentifiers: settings.disabledAppBundleIdentifiers,
+                        disabledDomains: PerDomainDisableSettings.disabledDomains(),
+                        suggestInIntegratedTerminals: settings.suggestInIntegratedTerminals,
+                        inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+                        focusSnapshot: snapshot,
+                        checkCapability: false
+                    ) == nil
+                }
+            }
+            .store(in: &cancellables)
 
         // Update the AX polling timer whenever the user changes the poll interval setting.
         suggestionSettings.$focusPollIntervalMilliseconds

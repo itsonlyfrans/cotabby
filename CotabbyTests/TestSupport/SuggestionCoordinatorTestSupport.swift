@@ -53,6 +53,9 @@ final class RigLowPowerModeProvider: SuggestionLowPowerModeProviding {
 
 @MainActor
 final class RigFocusProvider: SuggestionFocusProviding {
+    /// Tests can simulate a recent poll followed by a focus change discovered only on refresh.
+    var millisecondsSinceLastCapture: Int?
+    var onRefresh: (() -> Void)?
     var snapshot: FocusSnapshot
     private(set) var refreshCount = 0
     private(set) var transientCaretCacheInvalidations = 0
@@ -69,6 +72,7 @@ final class RigFocusProvider: SuggestionFocusProviding {
 
     func refreshNow() {
         refreshCount += 1
+        onRefresh?()
     }
 
     func invalidateTransientCaretCaches() {
@@ -97,6 +101,12 @@ final class RigOverlayController: SuggestionOverlayControlling {
     /// Records slide attempts (and declines them, like the protocol default) so tests can assert
     /// which accept paths even try to slide versus re-anchor through a present.
     private(set) var advanceInlineCalls: [(remaining: String, inserted: String)] = []
+    /// When true, `showSuggestion` behaves like the real controller waiting on a pixel caret read
+    /// or a lagging host caret: it records the text as held and leaves `state` on the previous
+    /// presentation. `landHeldPresentation()` then applies it, as the capture callback would.
+    var defersPresentations = false
+    private(set) var heldPresentationText: String?
+    private var heldGeometry: SuggestionOverlayGeometry?
 
     init(state: OverlayState = .hidden(reason: "initial")) {
         self.state = state
@@ -109,12 +119,29 @@ final class RigOverlayController: SuggestionOverlayControlling {
 
     func showSuggestion(_ text: String, geometry: SuggestionOverlayGeometry) {
         shownTexts.append(text)
+        if defersPresentations {
+            heldPresentationText = text
+            heldGeometry = geometry
+            return
+        }
+        heldPresentationText = nil
+        state = .visible(text: text, geometry: geometry, mode: .inline)
+        onStateChange?(state)
+    }
+
+    /// Applies the held presentation, the way the real controller's capture callback re-runs it.
+    func landHeldPresentation() {
+        guard let text = heldPresentationText, let geometry = heldGeometry else { return }
+        heldPresentationText = nil
+        heldGeometry = nil
         state = .visible(text: text, geometry: geometry, mode: .inline)
         onStateChange?(state)
     }
 
     func hide(reason: String) {
         hideReasons.append(reason)
+        heldPresentationText = nil
+        heldGeometry = nil
         state = .hidden(reason: reason)
         onStateChange?(state)
     }
@@ -125,6 +152,7 @@ final class RigInserter: SuggestionInserting {
     var lastErrorMessage: String?
     var insertedChunks: [String] = []
     var replacements: [(deleteCount: Int, text: String)] = []
+    var replacedTexts: [String] = []
     var shouldInsert = true
 
     func insert(_ suggestion: String) -> Bool {
@@ -132,8 +160,9 @@ final class RigInserter: SuggestionInserting {
         return shouldInsert
     }
 
-    func replace(deletingUTF16Count: Int, with text: String) -> Bool {
-        replacements.append((deletingUTF16Count, text))
+    func replace(deletingText: String, with text: String) -> Bool {
+        replacedTexts.append(deletingText)
+        replacements.append((deletingText.utf16.count, text))
         return shouldInsert
     }
 }
@@ -145,6 +174,8 @@ final class RigSuggestionEngine: SuggestionGenerating {
     var resultProvider: (SuggestionRequest) async throws -> SuggestionResult = { request in
         SuggestionResult(generation: request.generation, rawText: " world", text: " world", latency: 0.01)
     }
+    /// Cumulative synthetic engine snapshots exercise real coordinator streaming and acceptance.
+    var partialTexts: [String] = []
     private(set) var requests: [SuggestionRequest] = []
     private(set) var resetCount = 0
     private(set) var prewarmedRequests: [SuggestionRequest] = []
@@ -152,6 +183,17 @@ final class RigSuggestionEngine: SuggestionGenerating {
     func generateSuggestion(for request: SuggestionRequest) async throws -> SuggestionResult {
         requests.append(request)
         return try await resultProvider(request)
+    }
+
+    func generateSuggestion(
+        for request: SuggestionRequest,
+        onPartial: (@MainActor (SuggestionResult) -> Void)?
+    ) async throws -> SuggestionResult {
+        for text in partialTexts {
+            onPartial?(SuggestionResult(generation: request.generation, rawText: text, text: text, latency: 0.01))
+            await Task.yield()
+        }
+        return try await generateSuggestion(for: request)
     }
 
     func resetCachedGenerationContext() async {
@@ -207,11 +249,12 @@ final class RigVisualContextCoordinator: VisualContextCoordinating {
     var latestExcerpt: String?
     var onStateChange: ((VisualContextStatus, String?) -> Void)?
     var onInjectedContextReady: ((FocusedInputIdentity) -> Void)?
+    var refreshContextProvider: (() -> FocusedInputSnapshot?)?
     private(set) var startedSessions: [FocusedInputSnapshot] = []
     private(set) var cancelCalls: [Bool] = []
     var excerptValue: String?
 
-    func startSessionIfNeeded(for snapshotContext: FocusedInputSnapshot) {
+    func startSessionIfNeeded(for snapshotContext: FocusedInputSnapshot, configuration: VisualContextConfiguration) {
         startedSessions.append(snapshotContext)
     }
 
@@ -243,13 +286,22 @@ struct CoordinatorRig {
     let interactionState: SuggestionInteractionState
 }
 
+// App-hosted tests on macOS 15 can over-release @MainActor instances in Swift's
+// back-deployed isolated-deinit shim. Keep the stopped fixture graph alive, as the
+// focus/state suites already do; each test must still stop its coordinator so tasks
+// and subscriptions cannot escape into the next test. Production ownership is unchanged.
+@MainActor
+private var retainedCoordinatorRigs: [CoordinatorRig] = []
+
 @MainActor
 func makeCoordinatorRig(
     snapshot: FocusedInputSnapshot = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Hello"),
     capability: FocusCapability = .supported,
     overlayState: OverlayState = .hidden(reason: "initial"),
     lowPowerModeEnabled: Bool = false,
-    settingsSnapshot: SuggestionSettingsSnapshot = CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1)
+    settingsSnapshot: SuggestionSettingsSnapshot = CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1),
+    generationEngine: (any SuggestionGenerating)? = nil,
+    configuration: SuggestionConfiguration = .standard
 ) -> CoordinatorRig {
     let focusSnapshot = FocusSnapshot(
         applicationName: snapshot.applicationName,
@@ -276,14 +328,14 @@ func makeCoordinatorRig(
         inputMonitor: inputMonitor,
         overlayController: overlayController,
         suggestionInserter: inserter,
-        suggestionEngine: engine,
+        suggestionEngine: generationEngine ?? engine,
         suggestionSettings: settingsProvider,
         clipboardContextProvider: clipboardProvider,
         clipboardRelevanceFilter: clipboardFilter,
         visualContextCoordinator: visualContext,
         interactionState: interactionState,
         workController: SuggestionWorkController(),
-        configuration: .standard,
+        configuration: configuration,
         spellChecker: CurrentWordSpellChecker(),
         symSpellCorrector: SymSpellCorrector(preloadLanguage: nil),
         qualityMetricsStore: SuggestionQualityMetricsStore(
@@ -291,7 +343,7 @@ func makeCoordinatorRig(
         ),
         userDefaults: UserDefaults(suiteName: "CotabbyTests.rig.\(UUID().uuidString)") ?? .standard
     )
-    return CoordinatorRig(
+    let rig = CoordinatorRig(
         coordinator: coordinator,
         permissionProvider: permissionProvider,
         lowPowerModeProvider: lowPowerModeProvider,
@@ -306,6 +358,8 @@ func makeCoordinatorRig(
         visualContext: visualContext,
         interactionState: interactionState
     )
+    retainedCoordinatorRigs.append(rig)
+    return rig
 }
 
 /// Polls a main-actor condition until it holds or the timeout elapses, yielding to the run loop

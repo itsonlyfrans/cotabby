@@ -71,17 +71,7 @@ final class FoundationModelSuggestionEngine {
         }
 
         do {
-            let promptBytes = request.prompt.count
-            let maxTokens = request.maxPredictionTokens
-            CotabbyLogger.suggestion.debug(
-                "Foundation model generating",
-                metadata: baseMetadata.merging([
-                    "prompt_bytes": .stringConvertible(promptBytes),
-                    "max_tokens": .stringConvertible(maxTokens)
-                ]) { _, new in new }
-            )
             let startTime = Date()
-            let prompt = FoundationModelPromptRenderer.prompt(for: request)
             // In production, `isAvailable == true` implies `systemLanguageModel` is non-nil because
             // only `SystemAvailabilityProvider` can report `.available`, and it owns
             // the model instance. If a future test provider reports available without a model, keep
@@ -92,7 +82,18 @@ final class FoundationModelSuggestionEngine {
                 )
             }
 
-            let session = ensureSession(for: request, model: model)
+            let payload = try await preparedPayload(for: request, model: model)
+            try Task.checkCancellation()
+            let prompt = payload.prompt
+            CotabbyLogger.suggestion.debug("Foundation model generating", metadata: baseMetadata.merging([
+                "prompt_bytes": .stringConvertible(prompt.utf8.count),
+                "instructions_bytes": .stringConvertible(payload.instructions.utf8.count),
+                "context_size": .stringConvertible(contextSize(for: model)),
+                "max_tokens": .stringConvertible(request.maxPredictionTokens)
+            ]) { _, new in new })
+            // Build/cache with the exact instructions we just counted, rather than rendering the
+            // original unbounded request again after deciding the combined payload fits.
+            let session = ensureSession(instructions: payload.instructions, model: model)
             let stream = session.streamResponse(
                 to: prompt,
                 options: generationOptions(for: request)
@@ -211,9 +212,17 @@ final class FoundationModelSuggestionEngine {
             return
         }
 
-        let session = ensureSession(for: request, model: model)
-        session.prewarm()
-        CotabbyLogger.suggestion.debug("Foundation model session prewarmed")
+        do {
+            let payload = try await preparedPayload(for: request, model: model)
+            try Task.checkCancellation()
+            let session = ensureSession(instructions: payload.instructions, model: model)
+            session.prewarm()
+            CotabbyLogger.suggestion.debug("Foundation model session prewarmed")
+        } catch {
+            // Prewarm is opportunistic, including a request whose fixed contract cannot fit. Never
+            // construct an unbounded instruction session just because no response is requested yet.
+            return
+        }
     }
 
     /// Dropping the cached session forces the next request to rebuild instructions, which is the
@@ -253,10 +262,9 @@ final class FoundationModelSuggestionEngine {
     /// session can never be silently bound to a stale model. If that invariant ever changes
     /// (e.g. live Apple Intelligence asset reloads), include `ObjectIdentifier(model)` here.
     private func ensureSession(
-        for request: SuggestionRequest,
+        instructions: String,
         model: SystemLanguageModel
     ) -> LanguageModelSession {
-        let instructions = FoundationModelPromptRenderer.sessionInstructions(for: request)
         if let cached = cachedSession,
            cached.instructions == instructions,
            !cached.session.isResponding,
@@ -271,6 +279,81 @@ final class FoundationModelSuggestionEngine {
             pristineTranscriptCount: session.transcript.count
         )
         return session
+    }
+
+    /// Apple counts both channels against one context. Count with the model's real tokenizer on
+    /// 26.4+, and reserve response capacity plus framing even for a pristine session. Earlier OS
+    /// versions expose no tokenizer: one UTF-8 byte per budget unit deliberately overestimates
+    /// ordinary text and avoids the unsafe four-characters-per-token assumption for dense scripts.
+    private func preparedPayload(for request: SuggestionRequest, model: SystemLanguageModel) async throws
+        -> FoundationModelPromptRenderer.Payload {
+        do {
+            let preparationStart = Date()
+            let window = contextSize(for: model)
+            var tokenizerCalls = 0
+            var byteBoundAttempts = 0
+            #if compiler(>=6.3)
+            var countedInstructions: (text: String, tokens: Int)?
+            #endif
+            let prepared = try await FoundationModelPromptRenderer.preparePayload(
+                for: request, contextSize: window
+            ) { payload in
+                // The preparer validates this subtraction before calling the counter. A fitting
+                // byte upper bound needs no async tokenizer work, so ordinary keystrokes retain
+                // their previous latency. Larger pairs still use real counts before any trimming.
+                let inputLimit = window - FoundationModelPromptRenderer.framingTokenReserve
+                    - max(1, request.maxPredictionTokens)
+                if payload.utf8Count <= inputLimit {
+                    byteBoundAttempts += 1
+                    return payload.utf8Count
+                }
+                // Xcode 26.4 introduced these declarations with Swift 6.3. An OS availability
+                // check alone cannot compile an unknown symbol against an earlier SDK.
+                #if compiler(>=6.3)
+                if #available(macOS 26.4, *) {
+                    let instructionTokens: Int
+                    if let countedInstructions, countedInstructions.text == payload.instructions {
+                        instructionTokens = countedInstructions.tokens
+                    } else {
+                        instructionTokens = try await model.tokenCount(for: Instructions(payload.instructions))
+                        tokenizerCalls += 1
+                        try Task.checkCancellation()
+                        countedInstructions = (payload.instructions, instructionTokens)
+                    }
+                    let promptTokens = try await model.tokenCount(for: payload.prompt)
+                    tokenizerCalls += 1
+                    try Task.checkCancellation()
+                    let (combined, overflow) = instructionTokens.addingReportingOverflow(promptTokens)
+                    guard !overflow else { throw FoundationModelPromptRenderer.BudgetError.cannotFit }
+                    return combined
+                }
+                #endif
+                byteBoundAttempts += 1
+                return payload.utf8Count
+            }
+            CotabbyLogger.suggestion.debug("Foundation model context prepared", metadata: [
+                "request_id": .string(request.requestID),
+                "engine": .string("apple_intelligence"),
+                "input_measurement": .string(tokenizerCalls == 0 ? "utf8_upper_bound" : "apple_tokens"),
+                "tokenizer_calls": .stringConvertible(tokenizerCalls),
+                "byte_bound_attempts": .stringConvertible(byteBoundAttempts),
+                "preparation_ms": .stringConvertible(Int(Date().timeIntervalSince(preparationStart) * 1000))
+            ])
+            return prepared
+        } catch FoundationModelPromptRenderer.BudgetError.cannotFit {
+            throw SuggestionClientError.generationFailed(
+                "The Apple on-device context window cannot fit the autocomplete instructions and requested response."
+            )
+        }
+    }
+
+    private func contextSize(for model: SystemLanguageModel) -> Int {
+        #if compiler(>=6.3)
+        if #available(macOS 26.4, *) { return model.contextSize }
+        #endif
+        // Apple's original on-device model has a documented 4096-token window. Older SDKs
+        // lack the back-deployed contextSize symbol, so pair that limit with byte budgeting.
+        return 4096
     }
 
     /// Maps Cotabby's existing generation knobs onto the subset of Foundation Models options the

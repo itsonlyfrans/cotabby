@@ -304,7 +304,7 @@ extension WelcomeView {
                     .onboardingReveal(2)
 
                 HStack(spacing: 8) {
-                    WelcomeFeatureChip(systemImage: "lock.fill", label: "100% on-device")
+                    WelcomeFeatureChip(systemImage: "lock.fill", label: "Local-first")
                     WelcomeFeatureChip(systemImage: "chevron.left.forwardslash.chevron.right", label: "Open source")
                     WelcomeFeatureChip(systemImage: "macwindow", label: "Works everywhere")
                 }
@@ -445,8 +445,10 @@ extension WelcomeView {
 
     private var doneStepSubtitle: String {
         let wordKey = suggestionSettings.acceptanceKeyLabel
-        let fullKey = suggestionSettings.fullAcceptanceKeyLabel
-        let hasFullAccept = suggestionSettings.fullAcceptanceKeyCode != SuggestionSettingsModel.disabledKeyCode
+        let fullKey = suggestionSettings.isDoubleTapFullAcceptanceActive
+            ? "\(wordKey) twice"
+            : suggestionSettings.fullAcceptanceKeyLabel
+        let hasFullAccept = suggestionSettings.hasFullAcceptanceShortcut
 
         if hasFullAccept {
             return "Start typing anywhere.\nPress \(wordKey) to accept a word, \(fullKey) for the full suggestion."

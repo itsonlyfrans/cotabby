@@ -17,6 +17,11 @@ final class SuggestionCoordinator: ObservableObject {
     var state: SuggestionDebugState = .idle
     var overlayState: OverlayState = .hidden(reason: "Overlay idle.")
     var latestGenerationNumber: UInt64?
+    /// True while the latest focus snapshot carried host-owned marked text (system inline
+    /// prediction or IME composition); see `SuggestionCoordinator+HostMarkedText.swift`.
+    var isHoldingForHostMarkedText = false
+    /// Work id of a generation re-issued from the word boundary after a seam misspelling, so the
+    /// retry's own result is judged once and never retried again.
     @Published var visualContextStatus: VisualContextStatus = .idle
     @Published var latestVisualContextText: String?
     @Published var totalTabAcceptedWordCount: Int = 0
@@ -95,6 +100,20 @@ final class SuggestionCoordinator: ObservableObject {
     /// and presentation; the value owns the stream's pure state transitions.
     var suggestionStreamingState = SuggestionStreamingState()
 
+    /// Debug-only, text-free input-to-presentation timing; no separate persistent metrics store.
+    var suggestionPresentationTiming = SuggestionPresentationTiming()
+
+    /// Pure interaction policies live for the coordinator's lifetime; the only extra task owns a
+    /// delayed stream presentation. Work IDs and cancellation protect it when typing resumes.
+    var typingCadence = TypingCadence()
+    var dismissalMemory = SuggestionDismissalMemory()
+    var delayedStreamPresentation: Task<Void, Never>?
+
+    /// One ordinary on-device request may survive matching keys before it becomes visible.
+    /// The value owns text reconciliation; this timer bounds how long the model/AX may lag.
+    var typingPrediction: TypingPredictionCandidate?
+    var typingPredictionExpiry: Task<Void, Never>?
+
     /// Monotonic cancellation token for the "wait until the host publishes typed text to AX" loop.
     ///
     /// Keystrokes can arrive faster than Chromium publishes contenteditable updates. Without this
@@ -112,6 +131,16 @@ final class SuggestionCoordinator: ObservableObject {
     /// ready → accepted/rejected) can be joined with a single `jq` filter on `request_id`.
     /// `nil` between sessions; replaced when `+Prediction` builds the next request.
     var latestRequestID: String?
+    /// The text before the caret the request now in flight was built from. A base model's
+    /// completion is exact text following it, so `GhostSpaceBoundary` reads the model's own word
+    /// boundary against it (see `SuggestionResult.spacingIsExact`). Kept beside `latestRequestID`
+    /// because both describe the in-flight request, and every reader is already guarded by the
+    /// work-id check that makes "in flight" meaningful.
+    var latestRequestPrecedingText: String?
+    /// True once the continuation of the active suggestion has been prefetched, so the extra
+    /// generation happens at most once per suggestion however many characters are typed through it.
+    /// Cleared whenever the session is torn down or replaced.
+    var hasPrefetchedContinuation = false
     /// Set when a full acceptance commits its final chunk; consumed by the next `apply`. Lets the
     /// coordinator drop a regeneration that only re-proposes the just-accepted tail before the host
     /// publishes the insert, the Chromium AX-publish race that otherwise loops accept/regenerate/
@@ -128,16 +157,41 @@ final class SuggestionCoordinator: ObservableObject {
     var suggestionAnchorCache = SuggestionAnchorCache()
     static let anchorReuseDisabledDefaultsKey = "cotabbyAnchorReuseDisabled"
     static let speculativePrefetchDisabledDefaultsKey = "cotabbySpeculativePrefetchDisabled"
+    static let continuationPrefetchDisabledDefaultsKey = "cotabbyContinuationPrefetchDisabled"
 
-    /// Content signature a speculative post-acceptance generation was built against. While set,
-    /// `apply` may accept a result whose generation predates the live one as long as the live
-    /// content matches this signature (the speculation bet paid off), and the host-publish poll
-    /// stands down instead of scheduling a duplicate regeneration.
-    var pendingSpeculativeSignature: String?
+    /// Expected post-acceptance context. A speculative result may predate the live generation
+    /// only when both its writing session and exact text match. A matching draft in a different
+    /// conversation must never receive this exemption. The host-publish poll shares that rule.
+    var pendingSpeculativeContext: FocusedInputContext?
+
+    /// One bounded next-word request can outlive consumption of its source word. It has its own
+    /// work identity so accepting a correction does not cancel the answer being prepared for it.
+    /// Normal edits, dismissal, focus changes, and settings changes cancel both work controllers.
+    let continuationWorkController = SuggestionWorkController()
+    var preparedContinuation: PreparedContinuation?
 
     /// Pure state for the bounded "keep owning Tab" window after a final-chunk acceptance. The
     /// coordinator continues to own the timer and input-monitor effects around these transitions.
     var postExhaustionAcceptanceState = PostExhaustionAcceptanceState()
+
+    /// Pure state for recognizing a quick second press of the Accept Word key. Only real key presses
+    /// feed it; the queued post-exhaustion accept stays a plain one-word accept.
+    var doubleTapAcceptanceState = DoubleTapAcceptanceState()
+
+    /// Clock for double-tap timing, in seconds of system uptime. Tests substitute a manual clock so
+    /// a busy runner cannot stretch two back-to-back presses past the window.
+    var doubleTapUptimeProvider: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+
+    /// The user's typing history, when the app has one. Optional so test rigs and previews run
+    /// without it; the provider itself returns nothing while history is turned off.
+    let historyProvider: (any SuggestionHistoryProviding)?
+
+    /// Examples of the user's past writing for this field, for every request built from it.
+    /// Every request kind (ordinary, speculative, continuation, prewarm) passes the same examples so
+    /// their prompts share one head and the llama KV cache stays reusable between them.
+    func historyExamples(for context: FocusedInputContext) -> [String] {
+        historyProvider?.historyExamples(for: context, engine: settingsSnapshot.selectedEngine) ?? []
+    }
 
     init(
         permissionManager: any SuggestionPermissionProviding,
@@ -158,6 +212,7 @@ final class SuggestionCoordinator: ObservableObject {
         symSpellCorrector: SymSpellCorrector,
         spellingLanguageResolver: SpellingLanguageResolver = SpellingLanguageResolver(),
         qualityMetricsStore: SuggestionQualityMetricsStore,
+        historyProvider: (any SuggestionHistoryProviding)? = nil,
         userDefaults: UserDefaults = .standard
     ) {
         let storedTotalTabAcceptedWordCount = userDefaults.integer(
@@ -181,6 +236,7 @@ final class SuggestionCoordinator: ObservableObject {
         self.symSpellCorrector = symSpellCorrector
         self.spellingLanguageResolver = spellingLanguageResolver
         self.qualityMetricsStore = qualityMetricsStore
+        self.historyProvider = historyProvider
         self.userDefaults = userDefaults
         settingsSnapshot = suggestionSettings.snapshot
         // These collaborators isolate "how overlay/logging works" from "when the coordinator
@@ -263,12 +319,36 @@ final class SuggestionCoordinator: ObservableObject {
         }
 
         visualContextCoordinator.onStateChange = { [weak self] status, excerpt in
-            self?.visualContextStatus = status
-            self?.latestVisualContextText = excerpt
+            guard let self else { return }
+            let lostContext = self.latestVisualContextText != nil && excerpt == nil
+            self.visualContextStatus = status
+            self.latestVisualContextText = excerpt
+            // Expired or invalidated screen text must not survive indirectly in a visible tail,
+            // cached completion, or late result. New requests can use the live draft immediately.
+            if lostContext {
+                self.suggestionAnchorCache = SuggestionAnchorCache()
+                self.cancelPredictionWork()
+                self.clearSuggestion()
+                self.hideOverlay(reason: "Overlay hidden because screen context was invalidated.")
+                if case .disabled = self.state { return }
+                self.state = .idle
+            }
         }
 
         visualContextCoordinator.onInjectedContextReady = { [weak self] identity in
-            self?.schedulePredictionForCurrentFocusIfPossible(matching: identity)
+            guard let self, self.focusModel.snapshot.context?.identity == identity else { return }
+            // A host may expose identical URL/title/geometry for two chats. Changed screen text
+            // is then our next navigation signal. Retire visible tails as well as cached/async
+            // work; keeping an old tail stable would let it outlive arbitrarily many refreshes.
+            self.suggestionAnchorCache = SuggestionAnchorCache()
+            self.clipboardPrefaceMemo = nil
+            self.cancelPredictionWork()
+            self.clearSuggestion()
+            self.hideOverlay(reason: "Overlay hidden because screen context changed.")
+            self.schedulePredictionForCurrentFocusIfPossible(matching: identity)
+        }
+        visualContextCoordinator.refreshContextProvider = { [weak self] in
+            self?.currentVisualRefreshContext()
         }
 
         suggestionSettings.snapshotPublisher

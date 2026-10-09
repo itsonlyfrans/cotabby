@@ -19,11 +19,58 @@ extension SuggestionCoordinator {
         acceptSuggestion(fullText: true, keyName: "full-accept")
     }
 
+    /// Entry point for a real press of the Accept Word key.
+    ///
+    /// With double-tap enabled, the first press still accepts one word immediately, and a second
+    /// press within `DoubleTapAcceptanceState.window` on the same suggestion accepts what remains.
+    /// Promoting the second press instead of delaying the first keeps single-word acceptance as fast
+    /// as before; the pair still commits the whole suggestion. The queued post-exhaustion accept
+    /// calls `acceptCurrentSuggestion` directly, so a Tab buffered during regeneration never turns
+    /// into an accept-everything of a continuation the user has not seen yet.
+    ///
+    /// `isAutorepeat` marks a key-down the system generated because the key is held. Those keep
+    /// accepting word by word, as holding the key always has, but a held key is one long press:
+    /// a repeat neither completes a pending double tap nor arms a new one. Without this, holding
+    /// Accept Word past the first repeat (repeats arrive well inside the window) took everything.
+    ///
+    /// The focused app is resolved from the same focus snapshot the input monitor used to classify
+    /// this press, so an app with its own Accept Entire Suggestion binding keeps it here too.
+    func acceptForWordAcceptKeyPress(isAutorepeat: Bool) -> Bool {
+        let doubleTapApplies = settingsSnapshot.isDoubleTapFullAcceptanceActive(
+            forBundleIdentifier: focusModel.snapshot.bundleIdentifier
+        )
+        guard doubleTapApplies, !isAutorepeat else {
+            doubleTapAcceptanceState.reset()
+            return acceptCurrentSuggestion()
+        }
+
+        let now = doubleTapUptimeProvider()
+        if let session = interactionState.activeSession, !session.kind.isCorrection,
+           doubleTapAcceptanceState.consumeDoubleTap(of: .init(session: session), at: now) {
+            return acceptSuggestion(fullText: true, keyName: "double-tap")
+        }
+
+        let accepted = acceptCurrentSuggestion()
+        // Arm only when this press left a continuation with text still to accept. An exhausted
+        // suggestion hands Tab to the post-exhaustion window instead, and a correction commits as
+        // a unit, so neither has a "rest" for a second press to take.
+        if accepted, let advanced = interactionState.activeSession, !advanced.kind.isCorrection,
+           !advanced.isExhausted {
+            doubleTapAcceptanceState.recordWordAccept(of: .init(session: advanced), at: now)
+        } else {
+            doubleTapAcceptanceState.reset()
+        }
+        return accepted
+    }
+
     /// Shared acceptance path used by both word-by-word and full acceptance.
     private func acceptSuggestion(
         fullText: Bool,
         keyName: String
     ) -> Bool {
+        // A tab switch can precede the next timer poll. Refresh before committing text, while
+        // preserving the short reuse window for rapid consecutive accepts in the same field.
+        focusModel.refreshIfStale(maxAgeMilliseconds: Self.freshSnapshotReuseWindowMilliseconds)
         let snapshot = focusModel.snapshot
 
         if let disabledReason = currentDisabledReason(focusSnapshot: snapshot) {
@@ -51,6 +98,10 @@ extension SuggestionCoordinator {
             return passTabThrough(reason: snapshot.capability.summary)
         }
 
+        // Enforce visual-context expiry even if its timer was delayed by a busy main run loop.
+        // The invalidation callback retires any visible suggestion based on that old excerpt.
+        _ = visualContextCoordinator.excerpt(for: FocusedInputContext(snapshot: rawContext, generation: 0))
+
         // Gate on the live session, not on `state`. A background refresh (notably the visual-context
         // path that calls `schedulePrediction` once OCR finishes) flips `state` to `.debouncing`
         // while the previous suggestion is still buffered and its overlay is still on screen — and
@@ -76,18 +127,38 @@ extension SuggestionCoordinator {
         // partial modes (`.word`, `.phrase`), since whole-suggestion acceptance is exclusively the
         // dedicated full-accept key's job.
         let primaryGranularity = settingsSnapshot.acceptanceGranularity
+        // A presentation the overlay is still holding (pixel caret read, lagging host caret) leaves
+        // `overlayState` naming the pre-accept tail for a few tens of milliseconds. Hand the held
+        // text to validation so a rapid second Tab accepts the tail Cotabby is about to paint
+        // instead of mismatching, tearing the session down, and leaking Tab into the host.
+        let heldPresentationText = overlayController.heldPresentationText
         let preparation: SuggestionAcceptancePreparation
         if fullText {
-            preparation = interactionState.prepareFullAcceptance(from: rawContext, overlayState: overlayState)
+            preparation = interactionState.prepareFullAcceptance(
+                from: rawContext,
+                overlayState: overlayState,
+                heldPresentationText: heldPresentationText
+            )
         } else {
             preparation = interactionState.prepareAcceptance(
                 from: rawContext,
                 overlayState: overlayState,
+                heldPresentationText: heldPresentationText,
                 granularity: primaryGranularity,
                 autoAcceptTrailingPunctuation: settingsSnapshot.autoAcceptTrailingPunctuation
             )
         }
 
+        return commitPreparedAcceptance(preparation, rawContext: rawContext, keyName: keyName)
+    }
+
+    /// Preparation validates the live session; this stage performs insertion and advances that
+    /// exact session. Keeping the handoff explicit avoids repeating eligibility checks mid-commit.
+    private func commitPreparedAcceptance(
+        _ preparation: SuggestionAcceptancePreparation,
+        rawContext: FocusedInputSnapshot,
+        keyName: String
+    ) -> Bool {
         let liveContext: FocusedInputContext
         let sessionForAcceptance: ActiveSuggestionSession
         let acceptedChunk: String
@@ -151,7 +222,10 @@ extension SuggestionCoordinator {
         lastAcceptanceAt = Date()
         focusModel.invalidateTransientCaretCaches()
 
-        cancelPredictionWork()
+        if preparedContinuation == nil, sessionForAcceptance.advancing(by: acceptedChunk.count).isExhausted {
+            prepareContinuation(after: sessionForAcceptance, rawContext: rawContext)
+        }
+        cancelPredictionWork(preservingContinuation: true)
 
         switch interactionState.commitAcceptedChunk(
             acceptedChunk,
@@ -159,8 +233,9 @@ extension SuggestionCoordinator {
             session: sessionForAcceptance
         ) {
         case .exhausted:
+            let hasPreparedContinuation = markPreparedContinuationCommitted(after: sessionForAcceptance)
             latestGenerationNumber = liveContext.generation
-            clearSuggestion(clearDiagnostics: false)
+            clearSuggestion(clearDiagnostics: false, preservingContinuation: hasPreparedContinuation)
             hideOverlay(reason: "Overlay hidden because \(keyName) accepted the final suggestion chunk.")
             state = .idle
             // Remember what we just committed and the text it followed. `apply` consumes this to drop
@@ -181,14 +256,20 @@ extension SuggestionCoordinator {
             // swallowed and queued instead of leaking into the host app as a real Tab. Must run
             // *after* the `hideOverlay` above, which routes through `onStateChange(.hidden)` and
             // turns interception off; arming re-asserts it. See `armPostExhaustionAcceptance`.
-            armPostExhaustionAcceptance()
+            let expected = SpeculativeAcceptanceContext.optimisticSnapshot(
+                after: rawContext, inserting: insertionText
+            )
+            if SuggestionRequestFactory.shouldGenerateSuggestion(
+                for: expected.precedingText, suggestWithinWords: settingsSnapshot.suggestWithinWords
+            ) {
+                armPostExhaustionAcceptance()
+            }
             // Start the continuation against the text the host is about to publish instead of
             // idling through the publish poll first; the poll below validates the bet (see
             // dispatchSpeculativePostAcceptanceGeneration).
-            dispatchSpeculativePostAcceptanceGeneration(
-                rawContext: rawContext,
-                insertionChunk: insertionChunk
-            )
+            if !hasPreparedContinuation {
+                dispatchSpeculativePostAcceptanceGeneration(rawContext: rawContext, insertionChunk: insertionText)
+            }
             // Wait for the host to actually publish the inserted text before regenerating. A bare
             // `schedulePrediction()` here reads pre-insertion AX in Chromium editors (the publish lags
             // the synthetic keystroke), so the model re-proposes the word just accepted and the next
@@ -237,7 +318,7 @@ extension SuggestionCoordinator {
         }
         return SuggestionSessionReconciler.acceptanceChunkConsumingTrailingSpace(
             chunk,
-            remainingText: session.remainingText
+            remainingText: session.predictedRemainingText
         )
     }
 
@@ -299,6 +380,7 @@ extension SuggestionCoordinator {
         }
         if heldOverlayQuality != .layoutEstimated,
            overlayController.advanceInline(to: remainingText, insertedText: insertionChunk) {
+            recordSuggestionPresentation(context: liveContext)
             return
         }
 
@@ -363,7 +445,8 @@ extension SuggestionCoordinator {
         // length, closes the window where a keystroke between the last AX poll and this Tab swapped
         // in a different same-length word; if it diverged, pass the key through rather than delete
         // the wrong text.
-        guard case let .correction(typoWord) = session.kind,
+        guard correctionSessionMatches(session, rawContext: rawContext),
+              case let .correction(typoWord) = session.kind,
               let replacement = TypoCorrectionReplacementPlanner.plan(
                   precedingText: rawContext.precedingText,
                   expectedTypo: typoWord,
@@ -374,7 +457,7 @@ extension SuggestionCoordinator {
         }
 
         guard suggestionInserter.replace(
-            deletingUTF16Count: replacement.deletingUTF16Count,
+            deletingText: replacement.deletingText,
             with: replacement.replacementText
         ) else {
             let message = suggestionInserter.lastErrorMessage ?? "Correction insertion failed."
@@ -394,9 +477,11 @@ extension SuggestionCoordinator {
 
         lastAcceptanceAt = Date()
         focusModel.invalidateTransientCaretCaches()
-        cancelPredictionWork()
+        if preparedContinuation == nil { prepareContinuation(after: session, rawContext: rawContext) }
+        cancelPredictionWork(preservingContinuation: true)
+        let hasPreparedContinuation = markPreparedContinuationCommitted(after: session)
         latestGenerationNumber = session.baseContext.generation
-        clearSuggestion(clearDiagnostics: false)
+        clearSuggestion(clearDiagnostics: false, preservingContinuation: hasPreparedContinuation)
         hideOverlay(reason: "Overlay hidden because \(keyName) accepted a typo correction.")
         state = .idle
         let workID = currentWorkID
@@ -410,9 +495,12 @@ extension SuggestionCoordinator {
                 normalizedOutput: replacement.replacementText
             )
         }
-        // Re-arm prediction so the next keystroke can produce a fresh continuation now that the typo
-        // is gone — the user usually keeps typing right after accepting.
-        schedulePrediction()
+        // Replacement publishes asynchronously through Accessibility, just like accepting a
+        // completion. Wait for that edit before predicting, or a fast engine can offer the same
+        // correction again. Keep the same bounded Tab handoff used after a final word accept so
+        // a second quick Tab can accept the next word instead of moving focus out of the editor.
+        armPostExhaustionAcceptance()
+        schedulePredictionAfterHostPublishDelay(requiresTextChange: true)
         return true
     }
 
@@ -422,6 +510,7 @@ extension SuggestionCoordinator {
     /// return tells that tap to pass the original key event through naturally, so no synthetic
     /// replay is needed.
     func passTabThrough(reason: String) -> Bool {
+        suggestionPresentationTiming.clear()
         let generation = latestGenerationNumber
         cancelPredictionWork()
         clearSuggestion(clearDiagnostics: true)
@@ -529,9 +618,19 @@ extension SuggestionCoordinator {
             return false
         }
 
-        cancelPredictionWork()
+        let keptTypingPrediction = retainTypingPrediction(typing: typedCharacters)
+        if !keptTypingPrediction { cancelPredictionWork(preservingContinuation: true) }
 
         if advancedSession.isExhausted {
+            if keptTypingPrediction {
+                // Consuming the visible partial is not accepting unseen words. Keep decoding,
+                // release Tab, and let a later validated partial reveal the next complete word.
+                interactionState.clearSuggestion()
+                hideOverlay(reason: "Overlay hidden while a matching prediction continues.")
+                state = .generating
+                return true
+            }
+            markPreparedContinuationCommitted(after: session)
             completeActiveSuggestion(
                 reason: "Overlay hidden because the user typed through the rest of the suggestion.",
                 scheduleNextPrediction: true,
@@ -542,15 +641,32 @@ extension SuggestionCoordinator {
             return true
         }
 
+        if keptTypingPrediction {
+            suggestionStreamingState.recordRendered(advancedSession.remainingText)
+        }
         state = .ready(text: advancedSession.remainingText, latency: advancedSession.latency)
-        // Same slide as Tab acceptance; the user typed the next characters, so the caret traveled
-        // by exactly them. Fall back to the (session-start) caret anchor only if the slide can't apply.
-        if !overlayController.advanceInline(to: advancedSession.remainingText, insertedText: typedCharacters) {
+        // Nearly typed through: fetch what comes next into the cache now, so exhausting this
+        // suggestion lands on a ready one instead of a blank gap (see `prefetchContinuation`).
+        if let rawContext = focusModel.snapshot.context {
+            prefetchContinuation(after: advancedSession, rawContext: rawContext)
+        }
+        if isHoldingForHostMarkedText {
+            // The host's own prediction still occupies the ghost's spot; the advanced tail stays
+            // hidden until a snapshot without marked text reconciles and re-presents it.
+            if overlayState.isVisible {
+                hideOverlay(reason: Self.hostMarkedTextHoldReason)
+            }
+        } else if !overlayController.advanceInline(to: advancedSession.remainingText, insertedText: typedCharacters) {
+            // Same slide as Tab acceptance; the user typed the next characters, so the caret
+            // traveled by exactly them. Fall back to the (session-start) caret anchor only if the
+            // slide can't apply.
             presentOverlay(
                 text: advancedSession.remainingText,
                 at: session.baseContext.caretRect,
                 context: session.baseContext
             )
+        } else {
+            recordSuggestionPresentation(context: session.baseContext)
         }
         logStage(
             "typed-match-advanced",
@@ -569,9 +685,9 @@ extension SuggestionCoordinator {
         CotabbyLogger.suggestion.debug("Invalidating active suggestion: \(reason)")
         // The dying session is exactly what a backspace-rollback wants restored a moment later;
         // remember it (string-only) before the state is torn down.
-        if let session = interactionState.activeSession, !session.kind.isCorrection {
+        if let session = interactionState.activeSession, session.countsTowardModelQuality, !session.kind.isCorrection {
             suggestionAnchorCache.record(
-                identityKey: session.baseContext.focusedInputIdentityKey,
+                identityKey: session.baseContext.suggestionSessionIdentityKey,
                 precedingText: session.baseContext.precedingText,
                 fullText: session.fullText
             )
@@ -590,7 +706,7 @@ extension SuggestionCoordinator {
         message: String
     ) {
         let generation = latestGenerationNumber
-        clearSuggestion(clearDiagnostics: false)
+        clearSuggestion(clearDiagnostics: false, preservingContinuation: preparedContinuation?.awaitingCommit == true)
         hideOverlay(reason: reason)
         state = .idle
         logStage(stage, workID: currentWorkID, generation: generation, message: message)
@@ -613,7 +729,7 @@ extension SuggestionCoordinator {
     /// the first chunk counts, so word-by-word walks of one suggestion add nothing further and the
     /// acceptance rate stays suggestions-accepted over suggestions-shown.
     private func recordSuggestionAcceptedIfFirstChunk(of session: ActiveSuggestionSession) {
-        guard session.consumedCharacterCount == 0 else { return }
+        guard session.countsTowardModelQuality, session.consumedCharacterCount == 0 else { return }
         qualityMetricsStore.recordAcceptedSuggestion()
     }
 
@@ -739,19 +855,55 @@ extension SuggestionCoordinator {
             inputFrameRect: context.inputFrameRect,
             caretQuality: anchor.quality,
             bundleIdentifier: context.bundleIdentifier,
+            focusedURLString: context.focusedURLString,
             isCaretAtEndOfLine: context.isCaretAtEndOfLine,
             observedCharWidth: context.observedCharWidth,
             isRightToLeft: isRightToLeft,
             focusChangeSequence: context.focusChangeSequence,
             focusedInputIdentityKey: context.focusedInputIdentityKey,
             isCorrection: isCorrection,
-            resolvedFieldStyle: context.resolvedFieldStyle
+            resolvedFieldStyle: context.resolvedFieldStyle,
+            hostTextMetrics: context.hostTextMetrics,
+            isWebContentField: context.isWebContentField,
+            hasTrailingContent: context.hasTrailingContent,
+            isSingleLineField: context.isSingleLineField,
+            elementFrameRect: context.elementFrameRect,
+            lineTextBeforeCaret: GhostCaretRefinement.paragraphTextBeforeCaret(in: context.precedingText),
+            wrappedRun: context.observedContentEdges?.wrappedRun,
+            observedContentEdges: context.observedContentEdges
         )
-        _ = overlayPresenter.present(
+        let presentationMessage = overlayPresenter.present(
             text: text,
             geometry: geometry,
             previousState: overlayState
         )
+        // An identical text/geometry update is a no-op: an old visible panel must not satisfy a
+        // new input's timing measurement. Inline advances record through the same helper below.
+        if presentationMessage != nil {
+            recordSuggestionPresentation(context: context, isCorrection: isCorrection)
+        }
+    }
+
+    /// Records an accepted presentation state update, including the cheap inline-tail path. The
+    /// controller publishes state synchronously, before any optional opacity animation completes;
+    /// this is submission latency, not a compositor timestamp or a judgment of useful text.
+    private func recordSuggestionPresentation(context: FocusedInputContext, isCorrection: Bool = false) {
+        if CotabbyDebugOptions.isEnabled, overlayState.isVisible,
+           let measurement = suggestionPresentationTiming.presented(
+               identity: FocusedInputIdentity(
+                   elementIdentifier: context.elementIdentifier,
+                   focusChangeSequence: context.focusChangeSequence
+               ),
+               at: ProcessInfo.processInfo.systemUptime
+           ) {
+            CotabbyLogger.suggestion.debug("First suggestion presentation submitted after input", metadata: [
+                "stage": "first-presentation",
+                "request_id": .string(latestRequestID ?? "req_none"),
+                "input_kind": .string(measurement.inputKind),
+                "input_to_first_presentation_ms": .stringConvertible(measurement.milliseconds),
+                "is_correction": .stringConvertible(isCorrection)
+            ])
+        }
     }
 
     /// Repairs untrustworthy caret anchors with a hidden-text-layout estimate before presentation.
@@ -796,6 +948,20 @@ extension SuggestionCoordinator {
             return LayoutRepairedAnchor(rect: fallbackRect, quality: quality, outcome: nil, skipReason: nil)
         }
 
+        // A caret inside a wrapped paragraph run (CodeMirror in Obsidian, see `WrappedRunAnchor`):
+        // the paragraph is laid out in the run's own frame at the sibling runs' pitch, and the
+        // line the caret lands on is placed from the union's top. That geometry is measured (frame
+        // and pitch) except for the x inside the line, which is the host font's advance.
+        // A one-line run is not laid out again: its frame is the host's own line box, so the
+        // Accessibility caret already has the right line and only its x is approximate (the pixel
+        // read corrects that at presentation). Laying it out put the caret fourteen lines up.
+        if let edges = context.observedContentEdges, let wrapped = edges.wrappedRun, !wrapped.spansOneLine {
+            return wrappedRunAnchor(
+                edges: edges, context: context, fallbackRect: fallbackRect,
+                pendingInsertion: pendingInsertion, isRightToLeft: isRightToLeft
+            )
+        }
+
         // Derived rects carry a real AX measurement, so whether the estimate may second-guess
         // them depends on who produced the measurement. Both bypasses skip the estimator
         // entirely rather than computing a diagnostic they can never act on: this path runs
@@ -812,8 +978,14 @@ extension SuggestionCoordinator {
                 )
             }
             // Run-measured derived rects are kept unconditionally: run frames carry the host's
-            // real line positions, including blank lines some hosts omit from the AX text.
-            if context.observedContentEdges != nil {
+            // real line positions, including blank lines some hosts omit from the AX text. The
+            // provenance check matters because content edges can now also come from the host's
+            // line-query attributes, which describe a left margin but carry no line information —
+            // letting those skip the repair would leave a wrong-line web caret uncorrected. A
+            // one-line run (`WrappedRunAnchor.spansOneLine`) is such a frame too: it is the host's
+            // own line box, and the pixel read corrects its x at presentation.
+            if context.observedContentEdges?.isRunMeasured == true
+                || context.observedContentEdges?.wrappedRun?.spansOneLine == true {
                 return LayoutRepairedAnchor(
                     rect: fallbackRect, quality: .derived, outcome: nil, skipReason: .runMeasuredGeometry
                 )
@@ -851,6 +1023,51 @@ extension SuggestionCoordinator {
         case .rejected:
             return LayoutRepairedAnchor(rect: fallbackRect, quality: quality, outcome: outcome, skipReason: nil)
         }
+    }
+
+    /// Lays the wrapped paragraph out inside its run frame and returns the caret's line box there.
+    /// The estimator judges a field's shape from its frame height and rejects content taller than
+    /// the frame, but a union frame grows with its paragraph and the throttled run walk can report
+    /// it a few lines short of the live text (measured: every estimate rejected for vertical
+    /// overflow while a paragraph was being typed), so the layout frame is opened far below the
+    /// run: only its top edge and width place the caret. The caret rect is the sibling runs' line
+    /// box at the laid-out line's top, which is where the host draws that line.
+    static func wrappedRunAnchor(
+        edges: ObservedContentEdges,
+        context: FocusedInputContext,
+        fallbackRect: CGRect,
+        pendingInsertion: String,
+        isRightToLeft: Bool
+    ) -> LayoutRepairedAnchor {
+        guard let wrapped = edges.wrappedRun, let pitch = edges.linePitch ?? edges.lineBoxHeight, pitch > 0,
+              wrapped.frame.width > 0
+        else {
+            return LayoutRepairedAnchor(rect: fallbackRect, quality: .estimated, outcome: nil, skipReason: nil)
+        }
+        let frame = wrapped.frame
+        guard frame.width > 0 else {
+            return LayoutRepairedAnchor(rect: fallbackRect, quality: .estimated, outcome: nil, skipReason: nil)
+        }
+        let layoutHeight = max(frame.height, pitch * 60)
+        let layoutFrame = CGRect(x: frame.minX, y: frame.maxY - layoutHeight, width: frame.width, height: layoutHeight)
+        let input = TextLayoutCaretEstimator.Input(
+            precedingText: wrapped.paragraphTextBeforeCaret + pendingInsertion,
+            fieldFrame: layoutFrame,
+            fieldStyle: context.resolvedFieldStyle,
+            isRightToLeft: isRightToLeft,
+            prefixMayBeTruncated: false,
+            observedLineHeight: pitch,
+            observedCharWidth: context.observedCharWidth,
+            observedContentEdges: ObservedContentEdges(leftX: frame.minX, topY: frame.maxY)
+        )
+        let outcome = TextLayoutCaretEstimator.estimate(for: input)
+        guard case .estimate(let estimate) = outcome else {
+            return LayoutRepairedAnchor(rect: fallbackRect, quality: .estimated, outcome: outcome, skipReason: nil)
+        }
+        let lineBox = edges.lineBoxHeight ?? pitch
+        let lineTop = frame.maxY - CGFloat(estimate.lineIndex) * pitch
+        let rect = CGRect(x: estimate.caretRect.minX, y: lineTop - lineBox, width: 2, height: lineBox)
+        return LayoutRepairedAnchor(rect: rect, quality: .derived, outcome: outcome, skipReason: nil)
     }
 
     /// Vertical agreement test between the AX-derived caret and the layout estimate. Tolerance is

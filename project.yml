@@ -94,7 +94,7 @@ settings:
 configFiles:
   Debug: Config/Signing.xcconfig
   Release: Config/Signing.xcconfig
-# Shared application target body. `Cotabby` (prod) and `Cotabby Dev` both build the same sources
+# Shared application target body. Production, dev and fork targets build the same sources
 # from this template and differ only in identity-bearing settings below, so the dev build can hold
 # its own Accessibility/TCC grant without ever clobbering the released app's.
 targetTemplates:
@@ -104,6 +104,10 @@ targetTemplates:
     deploymentTarget: "14.0"
     sources:
       - path: Cotabby
+      - path: LICENSE
+        buildPhase: resources
+      - path: THIRD_PARTY_LICENSES.md
+        buildPhase: resources
     dependencies:
       - package: Sparkle
         product: Sparkle
@@ -174,6 +178,18 @@ targets:
         # and replace itself with the released bundle, the exact identity collapse this target exists
         # to prevent.
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: COTABBY_DEV $(inherited)
+  # Distributable fork: separate install/settings/TCC identity, no upstream update configuration.
+  # COTABBY_DEV disables Sparkle; COTABBY_FORK exposes manual fork release/source links. Keep both
+  # in every configuration; the fork still uses Release optimization and the app icon.
+  "Cotabby Fork":
+    templates:
+      - CotabbyApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.itsonlyfrans.cotabby
+        INFOPLIST_FILE: CotabbyForkInfo.plist
+        SPARKLE_PUBLIC_ED_KEY: ""
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: COTABBY_DEV COTABBY_FORK $(inherited)
   CotabbyTests:
     type: bundle.unit-test
     platform: macOS
@@ -235,6 +251,18 @@ schemes:
     # Profile/Archive intentionally stay on Release for representative optimized timings. Versus a
     # prod Release build the only difference is COTABBY_DEV (Sparkle compiled out), which is not on
     # any hot path, so dev profiling stays representative while the artifact is never shippable.
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+  "Cotabby Fork":
+    build:
+      targets:
+        "Cotabby Fork": all
+    run:
+      config: Debug
     profile:
       config: Release
     analyze:

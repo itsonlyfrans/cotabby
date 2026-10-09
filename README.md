@@ -5,17 +5,17 @@
   </a>
 </p>
 
-<h1 align="center">Cotabby [beta]</h1>
+<h1 align="center">Cotabby Fork [preview]</h1>
 
 <p align="center"><em>Open-source, local-first AI autocomplete for macOS.</em></p>
 
 <p align="center">
   <a href="https://cotabby.app">
   <img width="200" alt="landing-page" src="https://github.com/user-attachments/assets/c28fbb4b-6dfb-4403-a040-1df61daf4df2" /></a>
-  
 
-<a href="https://github.com/FuJacob/cotabby/releases/latest/download/Cotabby.dmg">
-<img width="200" alt="download" src="https://github.com/user-attachments/assets/d5cb4454-d2ab-41d3-9d36-171d44ebfc52" /></a>
+
+<a href="https://github.com/itsonlyfrans/cotabby/releases">
+<img width="200" alt="fork releases" src="https://github.com/user-attachments/assets/d5cb4454-d2ab-41d3-9d36-171d44ebfc52" /></a>
 
 
 <a href="https://ko-fi.com/cotabby" target="_blank">
@@ -23,20 +23,22 @@
 </a></p>
 
 <p align="center">
-  <a href="https://github.com/FuJacob/cotabby/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/FuJacob/cotabby/build.yml?branch=main" /></a>
+  <a href="https://github.com/itsonlyfrans/cotabby/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/itsonlyfrans/cotabby/build.yml?branch=improve-completions" /></a>
   <a href="LICENSE"><img alt="License: AGPL v3" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" /></a>
-  <a href="https://github.com/FuJacob/cotabby/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/FuJacob/cotabby" /></a>
-  <a href="https://github.com/FuJacob/cotabby/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/FuJacob/cotabby/total" /></a>
-  <a href="https://github.com/FuJacob/cotabby/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/FuJacob/cotabby?style=flat" /></a>
   <img alt="Swift" src="https://img.shields.io/badge/Swift-F05138?logo=swift&amp;logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey" />
 </p>
 
 <p align="center">
-  <sub>Cotabby is free and open-source — maintained by two students. If it's useful to you, please consider supporting Cotabby's future.</sub>
+  <sub>This independent fork builds on <a href="https://github.com/FuJacob/cotabby">FuJacob/Cotabby</a>. The support links above support the original project.</sub>
 </p>
 
 ---
+
+This fork adds explicit personal vocabulary, safer correction and history acceptance,
+and focused reliability improvements. It ships as **Cotabby Fork**, with separate
+settings and permissions and manual updates. Release preparation and current verification
+limits are documented in [RELEASING.md](RELEASING.md) and [work/FORK_ROADMAP.md](work/FORK_ROADMAP.md).
 
 ## What It Does
 
@@ -46,6 +48,8 @@ The default Apple Intelligence and Open Source engines run on your Mac. No accou
 required. An optional OpenAI-compatible engine can connect to a server you configure.
 
 ## Demo
+
+These are upstream feature demonstrations; they are not verification of every host in this fork.
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=p3TIgxQFQGE"><strong>Watch on YouTube →</strong></a>
@@ -66,6 +70,22 @@ required. An optional OpenAI-compatible engine can connect to a server you confi
 - **Emoji autocomplete** — type `:rocket:` and accept it without leaving the field
 - **Inline macros** — type `/` for quick math, unit and currency conversion, dates, and random values
 - **One-key autocorrect** — fix a likely typo with a single keystroke
+- **Personal vocabulary** — save names and specialized words in Settings → Writing. Cotabby
+  protects them from correction and uses unambiguous prefixes for local word-ending fallbacks.
+  The vocabulary list stays on your Mac and is not added to model prompts.
+- **Prediction controls** — choose whether to predict ahead, suggest within words, and show following words
+- **Optional screen context** — control visual context independently of the local prediction settings
+
+### This fork
+
+This fork builds on upstream Cotabby and keeps its license and attribution. The current improvement
+branch adds personal vocabulary and fixes Unicode correction deletion, repeated history signatures,
+and popup placement near the bottom of a display. Cursor recovery now checks actual keyboard focus
+and the current window. Accessibility recovery also recognizes the exact Slack, Element, and Ferdium
+app identities; each host still needs a live compatibility check.
+
+The [Cotypist research notes](work/COTYPIST_RESEARCH.md) distinguish static artifact observations
+from inferred features and unresolved behavior. No Cotypist code or assets are included.
 
 ## Privacy
 
@@ -123,18 +143,13 @@ For the full suggestion pipeline, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Compatibility:** macOS 14.0 or later. The Apple Intelligence engine needs macOS 26 or later on a supported Mac; on older systems, use the Open Source engine.
 
-### Homebrew
+Fork packages belong on [this fork's releases page](https://github.com/itsonlyfrans/cotabby/releases).
+Check the release status and validation notes before installing. While the first package is
+being prepared, build the **Cotabby Fork** scheme using [RELEASING.md](RELEASING.md).
+The app can coexist with upstream Cotabby, but run only one completion app at a time.
+Fork updates are manual; no upstream update feed or Homebrew tap is used.
 
-```sh
-brew tap FuJacob/cotabby
-brew install --cask cotabby
-```
-
-Upgrade later with `brew upgrade --cask cotabby`. The tap lives at [FuJacob/homebrew-cotabby](https://github.com/FuJacob/homebrew-cotabby).
-
-### Manual download
-
-Grab the latest release from [cotabby.app](https://cotabby.app) and drag Cotabby into your Applications folder.
+For the original project instead, see [upstream installation instructions](https://github.com/FuJacob/cotabby#install).
 
 ## Using Cotabby
 
@@ -152,7 +167,7 @@ Cotabby works inside other apps, so macOS asks for a few permissions. Each one m
 
 - **Accessibility** — read the text and cursor position in the field you're typing in, and insert what you accept.
 - **Input Monitoring** — notice your typing so it knows when to suggest, and detect the accept keys.
-- **Screen Recording** *(optional)* — capture the area around your cursor for visual context. Leave it off and everything else still works.
+- **Screen Recording** *(optional)* — capture the area around your cursor for visual context, and to match the ghost text's font, size, and position to the app's own text where the app doesn't report them. Leave it off and everything else still works.
 
 Cotabby blocks generation, presentation, and insertion in password and other secure fields.
 
@@ -161,10 +176,15 @@ Cotabby blocks generation, presentation, and insertion in password and other sec
 Requires Xcode and Command Line Tools. Apple Silicon is strongly recommended for local model performance. For setup, build, test, and contribution workflow details, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/FuJacob/cotabby.git Cotabby
+git clone https://github.com/itsonlyfrans/cotabby.git Cotabby
 cd Cotabby
-open Cotabby.xcodeproj
+git switch improve-completions
+scripts/prepare_cotabby_workspace.sh
+open build/cotabby-dependencies/Cotabby.xcworkspace
 ```
+
+Use the **Cotabby Dev** scheme for local work. The workspace temporarily supplies the native
+APIs in our pending CotabbyInference patch; preparation is automatic in CI and release builds.
 
 If you want to understand the runtime and suggestion pipeline before contributing, read [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -175,6 +195,7 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, bui
 ## Acknowledgments
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp), [CotabbyInference](https://github.com/FuJacob/cotabbyinference), [Sparkle](https://github.com/sparkle-project/Sparkle), and [swift-log](https://github.com/apple/swift-log) for runtime, updates, and logging.
+- [LaunchAtLogin](https://github.com/sindresorhus/LaunchAtLogin-Modern) for macOS login-item integration.
 - Apple's FoundationModels, Accessibility, SwiftUI, and AppKit for on-device generation and macOS integration.
 - [GitHub gemoji](https://github.com/github/gemoji) and Hugging Face for the emoji data and downloadable models.
 - [SymSpell](https://github.com/wolfgarbe/SymSpell) by Wolf Garbe (MIT) for multilingual autocorrect; frequency dictionaries derive from [Google Ngrams](https://books.google.com/ngrams) (CC BY 3.0) and licensed SCOWL/Hunspell word lists.
