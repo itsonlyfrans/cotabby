@@ -50,6 +50,8 @@ final class SettingsIndexTests: XCTestCase {
         // Each pair pins one real query for a setting that previously shipped without an index
         // entry. If one of these fails, a rename or removal broke search for that setting.
         let expectations: [(query: String, item: SettingsItem)] = [
+            ("personal vocabulary", .personalVocabulary),
+            ("jargon", .personalVocabulary),
             ("ghost text size", .ghostTextSize),
             ("predict ahead", .predictAheadWhileTyping),
             ("background", .predictAheadWhileTyping),

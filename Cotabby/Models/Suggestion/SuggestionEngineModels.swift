@@ -186,6 +186,9 @@ struct SuggestionSettingsSnapshot: Equatable, Sendable {
     /// commits the misspelled word with Space. The word boundary prevents pauses in unfinished words
     /// from triggering destructive edits.
     let automaticallyFixTypos: Bool
+    /// Explicit local words for spelling protection and deterministic completion only. They never
+    /// enter `SuggestionRequest` or model prompts; an empty list preserves existing behavior.
+    let personalVocabularyWords: [String]
     /// When true, a second press of the Accept Word key within `DoubleTapAcceptanceState.window`
     /// accepts the rest of the suggestion. Travels in the snapshot so the acceptance path reads the
     /// live value without subscribing to the settings model. Read it per app through

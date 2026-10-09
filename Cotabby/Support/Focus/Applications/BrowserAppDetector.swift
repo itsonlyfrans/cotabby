@@ -65,7 +65,13 @@ nonisolated enum BrowserAppDetector {
         "com.microsoft.vscode",          // Visual Studio Code
         "com.microsoft.vscodeinsiders",  // VS Code - Insiders
         "com.vscodium",                  // VSCodium (FOSS VS Code build)
-        "md.obsidian"                    // Obsidian (Electron, CodeMirror 6 editor) — #791
+        "md.obsidian",                   // Obsidian (Electron, CodeMirror 6 editor) — #791
+        // These messaging composers also need the lazy web-AX recovery path (#822, #859).
+        // Exact release identities come from Slack's macOS help, Element's release build.json,
+        // and Ferdium's electron-builder.yml; helper processes and sibling builds stay excluded.
+        "com.tinyspeck.slackmacgap",      // Slack
+        "im.riot.app",                   // Element
+        "org.ferdium.ferdium-app"         // Ferdium
     ]
 
     /// Broad check: is the user typing inside any web browser? Used for prompt tone hints.

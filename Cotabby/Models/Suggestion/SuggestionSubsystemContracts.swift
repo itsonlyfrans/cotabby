@@ -226,10 +226,10 @@ protocol SuggestionInserting: AnyObject {
 
     func insert(_ suggestion: String) -> Bool
 
-    /// Deletes `deletingUTF16Count` already-typed units and types `text` in one suppressed synthetic
-    /// burst. The correction-acceptance path uses this to swap a typo'd word for the corrected word.
-    /// `SuggestionInserter` already implements it (the emoji picker shares the same primitive).
-    func replace(deletingUTF16Count: Int, with text: String) -> Bool
+    /// Replaces the verified live suffix with `text` in one suppressed synthetic burst. Carrying
+    /// the original text lets the inserter count user-perceived characters for Delete key events;
+    /// AX's UTF-16 range length would overdelete decomposed letters and emoji.
+    func replace(deletingText: String, with text: String) -> Bool
 }
 
 /// The emoji picker's slice of the inserter: replace a run of already-typed characters (the literal

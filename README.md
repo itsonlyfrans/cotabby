@@ -66,8 +66,22 @@ required. An optional OpenAI-compatible engine can connect to a server you confi
 - **Emoji autocomplete** — type `:rocket:` and accept it without leaving the field
 - **Inline macros** — type `/` for quick math, unit and currency conversion, dates, and random values
 - **One-key autocorrect** — fix a likely typo with a single keystroke
+- **Personal vocabulary** — save names and specialized words in Settings → Writing. Cotabby
+  protects them from correction and uses unambiguous prefixes for local word-ending fallbacks.
+  The vocabulary list stays on your Mac and is not added to model prompts.
 - **Prediction controls** — choose whether to predict ahead, suggest within words, and show following words
 - **Optional screen context** — control visual context independently of the local prediction settings
+
+### This fork
+
+This fork builds on upstream Cotabby and keeps its license and attribution. The current improvement
+branch adds personal vocabulary and fixes Unicode correction deletion, repeated history signatures,
+and popup placement near the bottom of a display. Cursor recovery now checks actual keyboard focus
+and the current window. Accessibility recovery also recognizes the exact Slack, Element, and Ferdium
+app identities; each host still needs a live compatibility check.
+
+The [Cotypist research notes](work/COTYPIST_RESEARCH.md) distinguish static artifact observations
+from inferred features and unresolved behavior. No Cotypist code or assets are included.
 
 ## Privacy
 

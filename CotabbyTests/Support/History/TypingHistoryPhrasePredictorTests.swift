@@ -85,6 +85,47 @@ final class TypingHistoryPhrasePredictorTests: XCTestCase {
         XCTAssertEqual(predictor(history).continuation(after: "Then we will start the ", limits: twoWords), "imperum POC")
     }
 
+    func test_multiLineHistoryRespectsTheWordLimitWithoutRewritingTheSignature() {
+        let history = Array(repeating: "Thanks for your time.\nKind regards,\nSenad Aruc\nImperum B.V.", count: 6)
+        let twoWords = TypingHistoryPhrasePredictor.Limits(maxWords: 2, allowsNewlines: true)
+
+        XCTAssertEqual(
+            predictor(history).continuation(after: "Thanks for your time.\nKind regards,", limits: twoWords),
+            "\nSenad Aruc"
+        )
+    }
+
+    func test_alreadyTypedWordDoesNotConsumeTheContinuationWordBudget() {
+        let history = Array(repeating: "please let me know if you have any questions.", count: 6)
+        let twoWords = TypingHistoryPhrasePredictor.Limits(maxWords: 2, allowsNewlines: false)
+
+        XCTAssertEqual(predictor(history).continuation(after: "please let me know if", limits: twoWords), " you have")
+    }
+
+    func test_alreadyTypedWordDoesNotBypassSingleWordConfidence() {
+        let history = Array(repeating: "please let me know if it", count: 3)
+        let oneWord = TypingHistoryPhrasePredictor.Limits(maxWords: 1, allowsNewlines: false)
+
+        XCTAssertNil(predictor(history).continuation(after: "please let me know if", limits: oneWord))
+    }
+
+    func test_blankLinesCannotTeachANewlineOnlyCycle() {
+        let text = "Thanks for your time.\nKind regards,\n\n \n\nSenad Aruc\n\nImperum B.V."
+        // Consecutive line breaks collapse even across whitespace-only lines. Therefore a learned
+        // newline always leads to a counted word, keeping traversal bounded by the word budget.
+        XCTAssertEqual(
+            TypingHistoryPhrasePredictor.tokens(in: "regards,\n\n \n\nSenad"),
+            ["regards,", "\n", "Senad"]
+        )
+        let history = Array(repeating: text, count: 6)
+        let multiLine = TypingHistoryPhrasePredictor.Limits(maxWords: 4, allowsNewlines: true)
+
+        XCTAssertEqual(
+            predictor(history).continuation(after: "Thanks for your time.\nKind regards,", limits: multiLine),
+            "\nSenad Aruc\nImperum B.V."
+        )
+    }
+
     func test_twoWordFallbackAnswersWhenTheThirdWordIsNew() {
         // "Kind regards," follows many different sentences, so the three-word context before it is
         // rarely the same; the two-word fallback still knows what comes next.

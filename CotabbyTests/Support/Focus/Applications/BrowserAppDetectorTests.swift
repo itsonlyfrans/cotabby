@@ -56,6 +56,22 @@ final class BrowserAppDetectorTests: XCTestCase {
         XCTAssertFalse(BrowserAppDetector.isElectronEditor(bundleIdentifier: "com.clickup"))
     }
 
+    func testMessagingComposersUseExactEditorRecoveryWithoutBrowserClassification() {
+        // The release app identities enable all existing Electron recovery gates. They must not
+        // turn unrelated helpers, nightly builds, or sibling applications into trusted hosts.
+        for bundleIdentifier in ["com.tinyspeck.slackmacgap", "im.riot.app", "org.ferdium.ferdium-app"] {
+            for spelling in [bundleIdentifier, bundleIdentifier.uppercased()] {
+                XCTAssertTrue(BrowserAppDetector.isElectronEditor(bundleIdentifier: spelling), spelling)
+                XCTAssertTrue(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: spelling), spelling)
+                XCTAssertFalse(BrowserAppDetector.isBrowser(bundleIdentifier: spelling), spelling)
+            }
+            XCTAssertFalse(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: bundleIdentifier + ".helper"))
+        }
+        for sibling in ["com.tinyspeck.other", "im.riot.nightly", "org.ferdium.other"] {
+            XCTAssertFalse(BrowserAppDetector.needsWebAccessibilityPriming(bundleIdentifier: sibling), sibling)
+        }
+    }
+
     func testChatGPTCodexUsesEditorRecoveryWithoutBrowserClassification() {
         // The installed app is named ChatGPT but uses the Codex bundle identity. Recovery must
         // follow that identity while unrelated OpenAI apps stay outside the explicit allowlist.

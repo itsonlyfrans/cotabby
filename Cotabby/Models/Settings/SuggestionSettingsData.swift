@@ -73,6 +73,7 @@ struct SuggestionCorrectionSettings: Equatable {
     var offerTypoCorrections: Bool
     var enabledSpellingDictionaryCodes: [String]
     var automaticallyFixTypos: Bool
+    var personalVocabularyWords: [String]
 }
 
 /// Overlay, indicator, menu-bar, and transition presentation.
@@ -358,6 +359,11 @@ extension SuggestionSettingsData {
     var automaticallyFixTypos: Bool {
         get { correction.automaticallyFixTypos }
         set { correction.automaticallyFixTypos = newValue }
+    }
+
+    var personalVocabularyWords: [String] {
+        get { correction.personalVocabularyWords }
+        set { correction.personalVocabularyWords = newValue }
     }
 
     var showIndicator: Bool {

@@ -590,7 +590,10 @@ extension SuggestionCoordinator {
                 offerTypoCorrections: settingsSnapshot.offerTypoCorrections,
                 automaticallyFixTypos: settingsSnapshot.automaticallyFixTypos
             ),
-            isTypo: { spellChecker.isTypo($0) },
+            isTypo: {
+                !PersonalVocabulary.contains($0, in: settingsSnapshot.personalVocabularyWords)
+                    && spellChecker.isTypo($0)
+            },
             bestCorrection: {
                 bestCorrection(
                     for: $0,
@@ -662,7 +665,8 @@ extension SuggestionCoordinator {
     func completionSpellingAssessment(
         for word: String
     ) -> CompletionSeamGuard.SpellingAssessment {
-        guard spellChecker.isTypo(word) else {
+        guard !PersonalVocabulary.contains(word, in: settingsSnapshot.personalVocabularyWords),
+              spellChecker.isTypo(word) else {
             return .known
         }
         return spellChecker.bestCorrection(for: word) == nil
@@ -702,7 +706,7 @@ extension SuggestionCoordinator {
         }
 
         guard suggestionInserter.replace(
-            deletingUTF16Count: replacement.deletingUTF16Count,
+            deletingText: replacement.deletingText,
             with: replacement.replacementText
         ) else {
             let message = suggestionInserter.lastErrorMessage ?? "Automatic correction insertion failed."

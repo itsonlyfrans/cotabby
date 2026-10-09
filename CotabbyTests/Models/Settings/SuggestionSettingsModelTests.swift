@@ -54,6 +54,43 @@ final class SuggestionSettingsModelTests: XCTestCase {
         XCTAssertTrue(makeModel().predictAheadWhileTyping)
     }
 
+    func test_personalVocabularyPublishesIncomingValuesPersistsRemovesClearsAndResets() {
+        let model = makeModel()
+        var published: [[String]] = []
+        let subscription = model.snapshotPublisher.sink { published.append($0.personalVocabularyWords) }
+        defer { subscription.cancel() }
+        XCTAssertTrue(model.addPersonalVocabularyWord(" Élodie "))
+        XCTAssertFalse(model.addPersonalVocabularyWord("e\u{301}LODIE"))
+        XCTAssertFalse(model.addPersonalVocabularyWord("two words"))
+        XCTAssertEqual(published, [[], ["Élodie"]])
+        XCTAssertEqual(model.domainSettings.correction.personalVocabularyWords, ["Élodie"])
+        XCTAssertEqual(model.snapshot.personalVocabularyWords, ["Élodie"])
+        XCTAssertEqual(makeModel().personalVocabularyWords, ["Élodie"])
+
+        model.removePersonalVocabularyWord("ÉLODIE")
+        XCTAssertEqual(published.last, [])
+        XCTAssertEqual(makeModel().personalVocabularyWords, [])
+        model.addPersonalVocabularyWord("Cotabby")
+        model.clearPersonalVocabulary()
+        XCTAssertEqual(makeModel().personalVocabularyWords, [])
+        model.addPersonalVocabularyWord("Cotabby")
+        model.resetToDefaults()
+        XCTAssertEqual(model.personalVocabularyWords, [])
+        XCTAssertEqual(makeModel().personalVocabularyWords, [])
+        XCTAssertEqual(published.last, [])
+    }
+
+    func test_personalVocabularyRejectsAddsAtCapacityWithoutReplacingSavedWords() {
+        let saved = (0..<PersonalVocabulary.maximumEntries).map {
+            "Word" + String(repeating: "a", count: $0 / 26) + String(UnicodeScalar(97 + $0 % 26)!)
+        }
+        defaults.set(saved, forKey: "cotabbyPersonalVocabularyWords")
+        let model = makeModel()
+        XCTAssertFalse(model.addPersonalVocabularyWord("Cotabby"))
+        XCTAssertEqual(model.personalVocabularyWords, saved)
+        XCTAssertEqual(makeModel().personalVocabularyWords, saved)
+    }
+
     // MARK: - Setter persistence round-trip
 
     func test_debugOverlaysDefaultOffPublishPersistAndResetWithoutChangingInference() {

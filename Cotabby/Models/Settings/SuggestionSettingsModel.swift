@@ -90,6 +90,8 @@ final class SuggestionSettingsModel: ObservableObject {
     /// When on (and typo suppression is on), pressing Space after a misspelled word applies the best
     /// local correction immediately. Kept opt-in because this changes text without confirmation.
     @Published private(set) var automaticallyFixTypos: Bool
+    /// Explicit local vocabulary, owned with correction settings rather than model prompt context.
+    @Published private(set) var personalVocabularyWords: [String]
     /// Whether the Performance pane is recording per-request latency. Defaults to false so the
     /// default user never pays any extra storage or write cost — recording only kicks in once the
     /// user opts in from Settings.
@@ -259,6 +261,7 @@ final class SuggestionSettingsModel: ObservableObject {
         offerTypoCorrections = data.offerTypoCorrections
         enabledSpellingDictionaryCodes = data.enabledSpellingDictionaryCodes
         automaticallyFixTypos = data.automaticallyFixTypos
+        personalVocabularyWords = data.personalVocabularyWords
         isPerformanceTrackingEnabled = data.isPerformanceTrackingEnabled
         isLowPowerModeAutoDisableEnabled = data.isLowPowerModeAutoDisableEnabled
         isMenuBarIconVisible = data.isMenuBarIconVisible
@@ -345,6 +348,7 @@ final class SuggestionSettingsModel: ObservableObject {
         offerTypoCorrections = data.offerTypoCorrections
         enabledSpellingDictionaryCodes = data.enabledSpellingDictionaryCodes
         automaticallyFixTypos = data.automaticallyFixTypos
+        personalVocabularyWords = data.personalVocabularyWords
         isPerformanceTrackingEnabled = data.isPerformanceTrackingEnabled
         isLowPowerModeAutoDisableEnabled = data.isLowPowerModeAutoDisableEnabled
         isMenuBarIconVisible = data.isMenuBarIconVisible
@@ -458,7 +462,8 @@ final class SuggestionSettingsModel: ObservableObject {
                 suppressCompletionsOnTypo: suppressCompletionsOnTypo,
                 offerTypoCorrections: offerTypoCorrections,
                 enabledSpellingDictionaryCodes: enabledSpellingDictionaryCodes,
-                automaticallyFixTypos: automaticallyFixTypos
+                automaticallyFixTypos: automaticallyFixTypos,
+                personalVocabularyWords: personalVocabularyWords
             ),
             presentation: SuggestionPresentationSettings(
                 showIndicator: showIndicator,
@@ -540,6 +545,7 @@ final class SuggestionSettingsModel: ObservableObject {
             offerTypoCorrections: settings.correction.offerTypoCorrections,
             enabledSpellingDictionaryCodes: settings.correction.enabledSpellingDictionaryCodes,
             automaticallyFixTypos: settings.correction.automaticallyFixTypos,
+            personalVocabularyWords: settings.correction.personalVocabularyWords,
             doubleTapAcceptsEntireSuggestion: settings.shortcuts.doubleTapAcceptsEntireSuggestion,
             fullAcceptanceOverrideBundleIdentifiers: PerAppShortcutOverride.bundleIdentifiersOverridingFullAcceptance(
                 in: settings.shortcuts.perAppOverrides
@@ -857,6 +863,32 @@ final class SuggestionSettingsModel: ObservableObject {
 
     func isSpellingDictionaryEnabled(_ language: SpellingDictionaryLanguage) -> Bool {
         enabledSpellingDictionaryCodes.contains(language.rawValue)
+    }
+
+    /// Returns whether a new valid word was added, so the editor can retain invalid input for repair.
+    @discardableResult
+    func addPersonalVocabularyWord(_ input: String) -> Bool {
+        guard let word = PersonalVocabulary.normalizedWord(input),
+              personalVocabularyWords.count < PersonalVocabulary.maximumEntries,
+              !PersonalVocabulary.contains(word, in: personalVocabularyWords) else { return false }
+        setPersonalVocabularyWords(personalVocabularyWords + [word])
+        return true
+    }
+
+    func removePersonalVocabularyWord(_ word: String) {
+        let key = PersonalVocabulary.identity(word)
+        setPersonalVocabularyWords(personalVocabularyWords.filter { PersonalVocabulary.identity($0) != key })
+    }
+
+    func clearPersonalVocabulary() {
+        setPersonalVocabularyWords([])
+    }
+
+    private func setPersonalVocabularyWords(_ words: [String]) {
+        let normalized = PersonalVocabulary.normalize(words)
+        guard personalVocabularyWords != normalized else { return }
+        personalVocabularyWords = normalized
+        store.savePersonalVocabularyWords(normalized)
     }
 
     func setAutomaticallyFixTypos(_ enabled: Bool) {
@@ -1755,7 +1787,7 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                 $userName,
                 $customRules,
                 $responseLanguages,
-                $enabledSpellingDictionaryCodes
+                Publishers.CombineLatest($enabledSpellingDictionaryCodes, $personalVocabularyWords)
             ),
             // Acceptance and prediction toggles share one slot within Combine's four-input cap.
             Publishers.CombineLatest4(
@@ -1806,7 +1838,8 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                 let (globallyEnabled, pauseState) = globalState
                 let (clipboardContextEnabled, fastModeEnabled, mirrorPreference, typoToggles) = presentationToggles
                 let (suppressOnTypo, offerCorrections, automaticallyFixTypos) = typoToggles
-                let (userName, customRules, responseLanguages, enabledSpellingDictionaryCodes) = profile
+                let (userName, customRules, responseLanguages, vocabularyPolicy) = profile
+                let (enabledSpellingDictionaryCodes, personalVocabularyWords) = vocabularyPolicy
                 let (debounce, focusPoll, generationToggles, acceptToggles) = timing
                 let (multiLine, suggestWithinWords, showFollowingWords) = generationToggles
                 let (autoAcceptPunctuation, addSpaceAfterAccept, streamWhileGenerating, predictAhead) = acceptToggles
@@ -1846,6 +1879,7 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                     offerTypoCorrections: offerCorrections,
                     enabledSpellingDictionaryCodes: enabledSpellingDictionaryCodes,
                     automaticallyFixTypos: automaticallyFixTypos,
+                    personalVocabularyWords: personalVocabularyWords,
                     doubleTapAcceptsEntireSuggestion: doubleTapAcceptsEntireSuggestion,
                     fullAcceptanceOverrideBundleIdentifiers:
                         PerAppShortcutOverride.bundleIdentifiersOverridingFullAcceptance(in: perAppOverrides)

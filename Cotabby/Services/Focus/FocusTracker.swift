@@ -406,8 +406,10 @@ final class FocusTracker {
         }
         let pid = frontmost.processIdentifier
 
-        // Reuse a still-focused cached hit-test element instead of re-hit-testing every tick.
-        if let cache = chromiumHitTestCache, cache.pid == pid, AXHelper.isFocused(cache.element) {
+        // Revalidate window ownership as well as focus: a background window can keep an AXFocused
+        // descendant even though it no longer receives the synthetic acceptance keystrokes.
+        if let cache = chromiumHitTestCache, cache.pid == pid,
+           recoveredFieldIsCurrent(cache.element, applicationPID: pid) {
             logChromeFocusProbe(source: "cache", application: frontmost)
             return (cache.element, frontmost)
         }
@@ -422,12 +424,33 @@ final class FocusTracker {
         // Cursor hit-test: the only query that crosses the OOPIF boundary.
         if let hit = AXHelper.element(atCocoaPoint: NSEvent.mouseLocation) {
             let editable = AXHelper.nearestEditable(from: hit)
+            guard recoveredFieldIsCurrent(editable, applicationPID: pid) else { return nil }
             chromiumHitTestCache = (editable, pid)
             logChromeFocusProbe(source: "hit-test", application: frontmost)
             return (editable, frontmost)
         }
 
         return nil
+    }
+
+    /// Binds a global hit-test result to keyboard focus before associating it with the frontmost
+    /// app. Direct AXWindow membership is cheap; renderer nodes may instead expose it on an ancestor.
+    private func recoveredFieldIsCurrent(_ element: AXUIElement, applicationPID: pid_t) -> Bool {
+        let application = AXUIElementCreateApplication(applicationPID)
+        guard let window = recoveryElementAttribute(kAXFocusedWindowAttribute as CFString, on: application)
+        else { return false }
+        return RecoveredFocusValidation.accepts(
+            element, isFocused: AXHelper.isFocused(element), expectedWindow: window,
+            windowOf: { self.recoveryElementAttribute(kAXWindowAttribute as CFString, on: $0) },
+            parentOf: { AXHelper.parentElement(of: $0) }, equal: { CFEqual($0, $1) }
+        )
+    }
+
+    private func recoveryElementAttribute(_ attribute: CFString, on element: AXUIElement) -> AXUIElement? {
+        guard let raw = AXHelper.copyAttributeValue(attribute, on: element),
+              CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        // AX attributes are untyped CF values; cast only after checking the runtime type ID.
+        return unsafeBitCast(raw, to: AXUIElement.self)
     }
 
     /// Search only Codex's active window, accepting an explicitly focused editable node.

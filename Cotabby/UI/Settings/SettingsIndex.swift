@@ -56,6 +56,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
     case hideSuggestionsOnTypo
     case offerTypoCorrections
     case spellingDictionaries
+    case personalVocabulary
     case automaticallyFixTypos
     // Context
     case extendedContext
@@ -150,6 +151,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .customRules: return "Custom Rules"
         case .hideSuggestionsOnTypo: return "Hide Suggestions on Typo"
         case .offerTypoCorrections: return "Offer Corrections on Typo"
+        case .personalVocabulary: return "Personal Vocabulary"
         case .spellingDictionaries: return "Spelling Dictionaries"
         case .automaticallyFixTypos: return "Automatically Fix Typos"
         case .extendedContext: return "Extended Context"
@@ -238,6 +240,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .customRules: return "list.bullet.rectangle"
         case .hideSuggestionsOnTypo: return "eye.slash"
         case .offerTypoCorrections: return "checkmark.bubble"
+        case .personalVocabulary: return "character.book.closed.fill"
         case .spellingDictionaries: return "character.book.closed"
         case .automaticallyFixTypos: return "checkmark.circle"
         case .extendedContext: return "doc.text"
@@ -301,7 +304,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .emojiPicker, .emojiSkinTone, .emojiPeopleStyle, .emojiHistory:
             return .emoji
         case .length, .acceptPunctuation, .addSpaceAfterAccept, .name, .languages, .customRules,
-             .hideSuggestionsOnTypo, .offerTypoCorrections, .spellingDictionaries, .automaticallyFixTypos:
+             .hideSuggestionsOnTypo, .offerTypoCorrections, .spellingDictionaries, .automaticallyFixTypos, .personalVocabulary:
             return .writing
         case .extendedContext, .contextLivePreview, .typingHistory:
             return .context
@@ -370,6 +373,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .customRules: return "Your own style rules passed to the model."
         case .hideSuggestionsOnTypo: return "Pause completions while a word looks misspelled."
         case .offerTypoCorrections: return "Offer a green replacement for the misspelled word."
+        case .personalVocabulary: return "Save local words for spelling protection and word completion."
         case .spellingDictionaries: return "Dictionaries used to detect typos."
         case .automaticallyFixTypos: return "Replace a misspelled word right after you press Space."
         case .extendedContext: return "A glossary or notes sent with every suggestion."
@@ -536,6 +540,8 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .offerTypoCorrections:
             return ["typo", "correct", "correction", "fix", "spelling", "autocorrect",
                     "spell check", "mistake", "rewrite"]
+        case .personalVocabulary:
+            return ["personal", "vocabulary", "words", "names", "jargon", "dictionary", "local", "spelling", "complete"]
         case .spellingDictionaries:
             return ["dictionary", "dictionaries", "spelling", "language", "multilingual",
                     "english", "german", "spanish", "french", "hebrew", "italian",

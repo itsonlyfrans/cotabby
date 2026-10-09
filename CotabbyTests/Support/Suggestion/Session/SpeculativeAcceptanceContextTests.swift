@@ -39,7 +39,7 @@ final class SpeculativeAcceptanceContextTests: XCTestCase {
             precedingText: "Say teh ", trailingText: " now", selection: NSRange(location: 40, length: 0)
         )
         let optimistic = try XCTUnwrap(SpeculativeAcceptanceContext.optimisticSnapshot(
-            after: base, replacing: TypoCorrectionReplacement(deletingUTF16Count: 4, replacementText: "the 🐈 ")
+            after: base, replacing: TypoCorrectionReplacement(deletingText: "teh ", replacementText: "the 🐈 ")
         ))
 
         XCTAssertEqual(optimistic.precedingText, "Say the 🐈 ")
@@ -49,6 +49,20 @@ final class SpeculativeAcceptanceContextTests: XCTestCase {
         XCTAssertEqual(optimistic.elementIdentifier, base.elementIdentifier)
     }
 
+    func testDecomposedReplacementKeepsAXCaretOffsetsInUTF16() throws {
+        let deleted = "cafe\u{0301} "
+        let base = CotabbyTestFixtures.focusedInputSnapshot(
+            precedingText: "Keep 🐈 " + deleted, trailingText: "today", selection: NSRange(location: 100, length: 0)
+        )
+        let optimistic = try XCTUnwrap(SpeculativeAcceptanceContext.optimisticSnapshot(
+            after: base, replacing: TypoCorrectionReplacement(deletingText: deleted, replacementText: "café ")
+        ))
+
+        XCTAssertEqual(optimistic.precedingText, "Keep 🐈 café ")
+        XCTAssertEqual(optimistic.selection, NSRange(location: 99, length: 0), "Six deleted UTF-16 units, five inserted")
+        XCTAssertEqual(optimistic.trailingText, "today")
+    }
+
     func testReplacementFailsClosedWhenTheDeletionReachesPastTheReportedCaret() {
         // AX can report a caret location smaller than the captured prefix; a delete longer than that
         // location cannot describe an edit the insertion boundary can actually make.
@@ -56,7 +70,7 @@ final class SpeculativeAcceptanceContextTests: XCTestCase {
             precedingText: "Say teh ", selection: NSRange(location: 3, length: 0)
         )
         XCTAssertNil(SpeculativeAcceptanceContext.optimisticSnapshot(
-            after: base, replacing: TypoCorrectionReplacement(deletingUTF16Count: 4, replacementText: "the ")
+            after: base, replacing: TypoCorrectionReplacement(deletingText: "teh ", replacementText: "the ")
         ))
     }
 
@@ -75,7 +89,9 @@ final class SpeculativeAcceptanceContextTests: XCTestCase {
         XCTAssertEqual(session.remainingText, "is $100,")
         XCTAssertEqual(session.precedingTextOnceTypedThrough, "The budget is $100,")
         let lagging = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "The budget")
-        let optimistic = SpeculativeAcceptanceContext.optimisticSnapshot(after: lagging, precedingText: session.precedingTextOnceTypedThrough)
+        let optimistic = SpeculativeAcceptanceContext.optimisticSnapshot(
+            after: lagging, precedingText: session.precedingTextOnceTypedThrough
+        )
         XCTAssertEqual(optimistic.precedingText, "The budget is $100,")
         XCTAssertEqual(optimistic.selection.location, lagging.selection.location + " is $100,".utf16.count)
         XCTAssertEqual(optimistic.trailingText, lagging.trailingText)

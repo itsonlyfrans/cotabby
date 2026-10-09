@@ -63,7 +63,8 @@ nonisolated enum WordCompletionFallback {
     static func suffix(
         for prefix: String, references: Set<String>, dictionaryCandidates: [WordPrefixIndex.Candidate]
     ) -> String? {
-        guard prefix.count >= 3, prefix.allSatisfy({ $0.isLetter }) else { return nil }
+        guard prefix.count >= 3,
+              prefix.allSatisfy({ $0.isLetter || CaretWordContext.isConnector($0) }) else { return nil }
         let matches = references.filter {
             $0.count > prefix.count && $0.lowercased().hasPrefix(prefix.lowercased())
         }

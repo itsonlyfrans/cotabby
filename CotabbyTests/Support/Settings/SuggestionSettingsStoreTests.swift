@@ -30,6 +30,25 @@ final class SuggestionSettingsStoreTests: XCTestCase {
         XCTAssertEqual(defaults.object(forKey: "cotabbyPredictAheadWhileTyping") as? Bool, true)
     }
 
+    func test_personalVocabularyNormalizesPersistsAndResetsWithoutTouchingOtherData() async {
+        let defaults = makeIsolatedDefaults()
+        let store = SuggestionSettingsStore(userDefaults: defaults)
+        XCTAssertEqual(store.load(configuration: .standard).personalVocabularyWords, [])
+        XCTAssertNil(defaults.object(forKey: "cotabbyPersonalVocabularyWords"))
+
+        defaults.set([" Élodie ", "e\u{301}LODIE", "Cotabby", "two words", "one\ntwo"],
+                     forKey: "cotabbyPersonalVocabularyWords")
+        let loaded = store.load(configuration: .standard)
+        XCTAssertEqual(loaded.correction.personalVocabularyWords, ["Élodie", "Cotabby"])
+        XCTAssertEqual(defaults.stringArray(forKey: "cotabbyPersonalVocabularyWords"), ["Élodie", "Cotabby"])
+        store.savePersonalVocabularyWords(["O’Neill", "O’NEILL"])
+        XCTAssertEqual(store.load(configuration: .standard).personalVocabularyWords, ["O’Neill"])
+        defaults.set("keep", forKey: "unrelatedData")
+        XCTAssertEqual(store.resetToDefaults(configuration: .standard).personalVocabularyWords, [])
+        XCTAssertNil(defaults.object(forKey: "cotabbyPersonalVocabularyWords"))
+        XCTAssertEqual(defaults.string(forKey: "unrelatedData"), "keep")
+    }
+
     // MARK: - Suggestion timing
 
     func test_suggestWithinWords_preservesDefaultUserChoiceAndReset() async {
@@ -233,6 +252,7 @@ final class SuggestionSettingsStoreTests: XCTestCase {
         store.saveGhostTextSizeMultiplier(0.8)
         store.saveFastModeEnabled(true)
         store.saveAutomaticallyFixTypos(true)
+        store.savePersonalVocabularyWords(["Cotabby"])
         store.saveMenuBarIconVisible(false)
         store.saveMenuBarWordCountVisible(false)
         store.saveFadeInSuggestions(false)
@@ -737,6 +757,7 @@ final class SuggestionSettingsStoreTests: XCTestCase {
         store.saveSuppressCompletionsOnTypo(false)
         store.saveOfferTypoCorrections(false)
         store.saveEnabledSpellingDictionaryCodes([])
+        store.savePersonalVocabularyWords(["Cotabby"])
         store.saveAutomaticallyFixTypos(true)
         store.savePerformanceTrackingEnabled(true)
         store.saveLowPowerModeAutoDisableEnabled(false)

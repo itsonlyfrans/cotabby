@@ -54,6 +54,60 @@ final class TypingHistoryPhraseEngineTests: XCTestCase {
         XCTAssertEqual(base.calls, 1)
     }
 
+    func test_signatureAlreadyFollowingTheCaretFallsThroughToTheModel() async throws {
+        let signature = "\nSenad Aruc\nImperum B.V."
+        let (engine, base, _) = makeEngine(phrase: signature)
+        let request = CotabbyTestFixtures.suggestionRequest(
+            precedingText: "Thanks for your time.\nKind regards,",
+            trailingText: signature,
+            isMultiLineEnabled: true
+        )
+
+        let result = try await engine.generateSuggestion(for: request)
+
+        XCTAssertEqual(result.text, " model")
+        XCTAssertEqual(base.calls, 1)
+    }
+
+    func test_caseAndPunctuationDifferencesStillRejectAnExistingSignature() async throws {
+        let (engine, base, _) = makeEngine(phrase: "\nSenad Aruc\nImperum B.V.")
+        let request = CotabbyTestFixtures.suggestionRequest(
+            trailingText: "\nSENAD ARUC\nImperum BV", isMultiLineEnabled: true
+        )
+
+        _ = try await engine.generateSuggestion(for: request)
+
+        XCTAssertEqual(base.calls, 1)
+    }
+
+    func test_unsafeHistoryFallsThroughToTheModel() async throws {
+        for phrase in ["", " \n ", " a\tb", " corrupted\u{FFFD}"] {
+            let (engine, base, _) = makeEngine(phrase: phrase)
+
+            let result = try await engine.generateSuggestion(for: CotabbyTestFixtures.suggestionRequest())
+
+            XCTAssertEqual(result.text, " model", "Rejected history: \(phrase.debugDescription)")
+            XCTAssertEqual(base.calls, 1)
+        }
+    }
+
+    func test_validHistoryPreservesExactUserTextAndUnrelatedTrailingText() async throws {
+        // Model normalization can strip this echoed word and classify the user label as
+        // scaffolding. A deterministic phrase must retain the spelling and spacing the user wrote.
+        let phrase = " hello\n[User 0001]: keep my wording."
+        let (engine, base, _) = makeEngine(phrase: phrase)
+        let request = CotabbyTestFixtures.suggestionRequest(
+            precedingText: "hello", trailingText: "\nAn unrelated quoted message", isMultiLineEnabled: true
+        )
+
+        let result = try await engine.generateSuggestion(for: request)
+
+        XCTAssertEqual(result.text, phrase)
+        XCTAssertEqual(result.rawText, phrase)
+        XCTAssertTrue(result.spacingIsExact)
+        XCTAssertEqual(base.calls, 0)
+    }
+
     func test_liveEngineKindIsPassedToHistory() async throws {
         let (engine, _, history) = makeEngine(phrase: nil, engine: .openAICompatible)
 

@@ -6,6 +6,72 @@ import XCTest
 /// transient bad ghosts, exact insertion, dismissal/cache reuse, and cancelled delayed display.
 @MainActor
 final class SuggestionCoordinatorWordCompletionTests: XCTestCase {
+    func testPersonalVocabularyProtectsCommittedNameAndBufferedWord() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Contact Recieve "),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1,
+                suppressCompletionsOnTypo: true, offerTypoCorrections: true, automaticallyFixTypos: true,
+                personalVocabularyWords: ["Recieve"]))
+        defer { rig.coordinator.stop() }
+        rig.coordinator.symSpellCorrector.loadForTesting(contents: "receive 100\n")
+        rig.engine.resultProvider = { request in
+            .init(generation: request.generation, rawText: "tomorrow", text: "tomorrow", latency: 0.01)
+        }
+        rig.coordinator.schedulePrediction()
+        await waitUntil { !rig.engine.requests.isEmpty }
+        XCTAssertTrue(rig.inserter.replacements.isEmpty, "A saved name followed by Space must not be corrected")
+        XCTAssertEqual(rig.coordinator.completionSpellingAssessment(for: "RECIEVE"), .known)
+        XCTAssertEqual(rig.engine.requests.first?.prefixText, "Contact Recieve ")
+        let context = rig.interactionState.materializeContext(from: rig.focusProvider.snapshot.context!)
+        XCTAssertEqual(rig.coordinator.bufferedCompletionText("tomorrow Recieve", visibleText: "tomorrow",
+            context: context, isFinal: true), "tomorrow Recieve")
+    }
+
+    func testPersonalVocabularyCompletesWithoutSendingSavedWordsAsContext() {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Contact Cota"),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(personalVocabularyWords: ["Cotabby"]))
+        defer { rig.coordinator.stop() }
+        let context = rig.interactionState.materializeContext(from: rig.focusProvider.snapshot.context!)
+        XCTAssertEqual(rig.coordinator.localWordCompletion(context: context), "bby")
+        XCTAssertEqual(rig.coordinator.completionReferenceWords(context: context), ["Contact", "Cotabby"])
+        XCTAssertTrue(rig.engine.requests.isEmpty, "Exact local word completion does not invoke a model")
+    }
+
+    func testExplicitVocabularyCompletesUnspacedScriptsWithoutBroadeningDictionaryPolicy() {
+        for (prefix, word, suffix) in [("東京大", "東京大学", "学"), ("대한민", "대한민국", "국"),
+                                       ("ประชา", "ประชาชน", "ชน")] {
+            let rig = makeCoordinatorRig(
+                snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: prefix),
+                settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(personalVocabularyWords: [word]))
+            let context = rig.interactionState.materializeContext(from: rig.focusProvider.snapshot.context!)
+            XCTAssertEqual(rig.coordinator.localWordCompletion(context: context), suffix)
+            XCTAssertTrue(rig.engine.requests.isEmpty)
+            XCTAssertNil(CaretWordContext.unfinishedWord(in: prefix), "Ordinary spelling policy remains unchanged")
+            rig.coordinator.stop()
+        }
+        let ambiguous = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "東京大"),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(personalVocabularyWords: ["東京大学", "東京大学院"]))
+        defer { ambiguous.coordinator.stop() }
+        let context = ambiguous.interactionState.materializeContext(from: ambiguous.focusProvider.snapshot.context!)
+        XCTAssertNil(ambiguous.coordinator.localWordCompletion(context: context))
+        let insideToken = CotabbyTestFixtures.focusedInputContext(precedingText: "東京大", trailingText: "学")
+        XCTAssertNil(ambiguous.coordinator.localWordCompletion(context: insideToken))
+    }
+
+    func testOtherTyposStillCorrectWithPersonalVocabularyConfigured() async {
+        let rig = makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please recieve "),
+            settingsSnapshot: CotabbyTestFixtures.settingsSnapshot(debounceMilliseconds: 1,
+                suppressCompletionsOnTypo: true, automaticallyFixTypos: true, personalVocabularyWords: ["Cotabby"]))
+        defer { rig.coordinator.stop() }
+        rig.coordinator.symSpellCorrector.loadForTesting(contents: "receive 100\n")
+        rig.coordinator.schedulePrediction()
+        await waitUntil { !rig.inserter.replacements.isEmpty }
+        XCTAssertEqual(rig.inserter.replacements.map(\.text), ["receive "])
+    }
+
     func testMissingSpacePredictionAppearsAndAcceptsWithoutAnotherGeneration() async {
         for streaming in [false, true] {
             let rig = makeCoordinatorRig(

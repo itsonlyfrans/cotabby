@@ -18,6 +18,27 @@ final class SyntheticReplacePlannerTests: XCTestCase {
         XCTAssertFalse(plan.isNoop)
     }
 
+    func test_textPlan_deletesDecomposedLetterOnceAndPreservesPrecedingText() {
+        let deleted = "cafe\u{0301} "
+        let plan = SyntheticReplacePlanner.plan(deletingText: deleted, text: "coffee ")
+
+        XCTAssertEqual(plan.backspaceCount, 5)
+        XCTAssertEqual(plan.totalKeyDownCount, 6)
+        XCTAssertEqual(plan.insertUTF16, Array("coffee ".utf16))
+        XCTAssertEqual(String(("Keep " + deleted).dropLast(plan.backspaceCount)), "Keep ")
+        XCTAssertEqual(deleted.utf16.count, 6, "UTF-16 length must not become the Delete count")
+    }
+
+    func test_textPlan_deletesEachEmojiGraphemeOnce() {
+        for deleted in ["😀", "👨‍👩‍👧‍👦", "👍🏽", "🇨🇦"] {
+            let plan = SyntheticReplacePlanner.plan(deletingText: deleted, text: "x")
+            XCTAssertEqual(plan.backspaceCount, 1, deleted)
+            XCTAssertEqual(plan.totalKeyDownCount, 2, deleted)
+            XCTAssertEqual(String(("Keep " + deleted).dropLast(plan.backspaceCount)), "Keep ", deleted)
+            XCTAssertGreaterThan(deleted.utf16.count, plan.backspaceCount, deleted)
+        }
+    }
+
     func test_plan_emptyInsertCountsNoInsertionKeyDown() {
         let plan = SyntheticReplacePlanner.plan(deletingUTF16Count: 3, text: "")
 

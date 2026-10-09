@@ -111,8 +111,24 @@ final class CurrentWordExtractorTests: XCTestCase {
 
         XCTAssertEqual(
             replacement,
-            TypoCorrectionReplacement(deletingUTF16Count: 5, replacementText: "name ")
+            TypoCorrectionReplacement(deletingText: "nmae ", replacementText: "name ")
         )
+    }
+
+    func test_typoReplacement_keepsLiveDecomposedLettersForBothDeletionUnits() throws {
+        let liveWord = "cafe\u{0301}"
+        let replacement = try XCTUnwrap(TypoCorrectionReplacementPlanner.plan(
+            precedingText: "Keep " + liveWord + " ",
+            // Canonically equal to the live text, but one fewer UTF-16 unit.
+            expectedTypo: "café",
+            correctedWord: "coffee",
+            requiresTrailingSpace: true
+        ))
+
+        XCTAssertEqual(Array(replacement.deletingText.utf16), Array((liveWord + " ").utf16))
+        XCTAssertEqual(replacement.deletingUTF16Count, 6, "AX slicing uses the live representation")
+        XCTAssertEqual(replacement.deletingText.count, 5, "Delete events count graphemes, including the space")
+        XCTAssertEqual(replacement.replacementText, "coffee ")
     }
 
     func test_typoReplacement_rejectsAutomaticFixBeforeSpace() {
@@ -134,7 +150,7 @@ final class CurrentWordExtractorTests: XCTestCase {
                 correctedWord: "name",
                 requiresTrailingSpace: false
             ),
-            TypoCorrectionReplacement(deletingUTF16Count: 6, replacementText: "name, ")
+            TypoCorrectionReplacement(deletingText: "nmae, ", replacementText: "name, ")
         )
         // Automatic fixes only fire on a bare trailing space, so ", " is refused there.
         XCTAssertNil(
@@ -155,7 +171,7 @@ final class CurrentWordExtractorTests: XCTestCase {
                 correctedWord: "  name\n",
                 requiresTrailingSpace: true
             ),
-            TypoCorrectionReplacement(deletingUTF16Count: 5, replacementText: "name ")
+            TypoCorrectionReplacement(deletingText: "nmae ", replacementText: "name ")
         )
     }
 

@@ -145,8 +145,12 @@ nonisolated struct TypingHistoryPhrasePredictor: Sendable {
                 guard limits.allowsNewlines, !isFirstStep || partial == nil else { break }
                 output += "\n"
             } else if isFirstStep, let partial {
-                output += String(token.dropFirst(partial.count))
-                words += 1
+                let remainder = String(token.dropFirst(partial.count))
+                output += remainder
+                // A fully typed final word still advances the learned context, but inserts no
+                // word. Charging it to the output budget would shorten every boundary-less
+                // shortcut by one and bypass the stronger evidence required for one new word.
+                if !remainder.isEmpty { words += 1 }
             } else {
                 // A space separates words, except right after a line break or at the very start
                 // when the field already ends in whitespace the user typed.

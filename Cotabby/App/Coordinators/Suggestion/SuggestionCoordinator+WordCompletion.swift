@@ -54,13 +54,22 @@ extension SuggestionCoordinator {
         WordCompletionFallback.referenceWords(precedingText: context.precedingText,
                                              trailingText: context.trailingText,
                                              glossary: settingsSnapshot.extendedContext)
+            .union(settingsSnapshot.personalVocabularyWords)
     }
 
     /// A final unusable model result may fall back to a single exact-prefix word ending. This
     /// remains entirely local even for the endpoint backend and never invokes another generation.
     func localWordCompletion(context: FocusedInputContext) -> String? {
-        guard context.trailingText.first?.isLetter != true,
-              let prefix = CaretWordContext.unfinishedWord(in: context.precedingText) else { return nil }
+        guard !CaretTokenPosition.isInsideToken(precedingText: context.precedingText,
+                                               trailingText: context.trailingText) else { return nil }
+        guard let prefix = CaretWordContext.unfinishedWord(in: context.precedingText) else {
+            // Ordinary dictionary policy excludes unspaced scripts. An explicit saved word can
+            // still supply a safe exact ending without changing spelling-language detection or
+            // treating arbitrary document text as a new dictionary for those scripts.
+            guard let prefix = PersonalVocabulary.unfinishedWord(in: context.precedingText) else { return nil }
+            return WordCompletionFallback.suffix(for: prefix, references: Set(settingsSnapshot.personalVocabularyWords),
+                                                 dictionaryCandidates: [])
+        }
         let languages = SpellingDictionaryCatalog.languages(for: settingsSnapshot.enabledSpellingDictionaryCodes)
         let language = spellingLanguageResolver.resolve(precedingText: context.precedingText,
                                                        currentWord: prefix, enabledLanguages: languages)

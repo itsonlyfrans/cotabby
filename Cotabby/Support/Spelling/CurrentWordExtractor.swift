@@ -108,9 +108,15 @@ nonisolated enum CurrentWordExtractor {
 /// Keeping this as a value type lets the coordinator validate first and perform side effects second.
 /// That separation matters for Accessibility-backed editors, where the field may change between the
 /// original correction offer and the eventual edit.
-struct TypoCorrectionReplacement: Equatable, Sendable {
-    let deletingUTF16Count: Int
+nonisolated struct TypoCorrectionReplacement: Equatable, Sendable {
+    /// Preserve the live field's spelling, including its Unicode representation. Swift's String
+    /// equality accepts canonically equivalent letters, whose UTF-16 lengths can still differ.
+    let deletingText: String
     let replacementText: String
+
+    /// AX offsets and context slicing count UTF-16 units; synthetic Delete events count graphemes.
+    /// Derive each at its own boundary instead of passing an ambiguous integer between them.
+    var deletingUTF16Count: Int { deletingText.utf16.count }
 }
 
 /// Builds a fail-closed replacement from the latest text before the caret.
@@ -135,7 +141,7 @@ enum TypoCorrectionReplacementPlanner {
         }
 
         return TypoCorrectionReplacement(
-            deletingUTF16Count: ((expectedTypo + live.delimiter) as NSString).length,
+            deletingText: live.word + live.delimiter,
             replacementText: normalizedCorrection + live.delimiter
         )
     }

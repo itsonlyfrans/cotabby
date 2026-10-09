@@ -35,7 +35,7 @@ final class SuggestionContinuationPlanTests: XCTestCase {
     func testTargetEndingInSpaceTrimsOnlyLeadingSpacesAndHasNoJoiningVariant() throws {
         let source = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please recieve ")
         let plan = try XCTUnwrap(SuggestionContinuationPlan.correcting(
-            .init(deletingUTF16Count: 8, replacementText: "receive "), in: source
+            .init(deletingText: "recieve ", replacementText: "receive "), in: source
         ))
         XCTAssertEqual(plan.targetSnapshot.precedingText, "Please receive ")
         XCTAssertEqual(plan.continuation(from: "   the"), "the")
@@ -57,13 +57,13 @@ final class SuggestionContinuationPlanTests: XCTestCase {
 
     func testReplacementUsesUTF16RatherThanCharacterCount() throws {
         let source = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "A 🐈 teh ", selection: NSRange(location: 108, length: 0))
-        let replacement = TypoCorrectionReplacement(deletingUTF16Count: 4, replacementText: "the ")
+        let replacement = TypoCorrectionReplacement(deletingText: "teh ", replacementText: "the ")
         let plan = try XCTUnwrap(SuggestionContinuationPlan.correcting(replacement, in: source))
         XCTAssertEqual(plan.targetSnapshot.precedingText, "A 🐈 the ")
         XCTAssertEqual(plan.targetSnapshot.selection.location, 108, "AX location can include text outside the captured window.")
         let emojiSource = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "A 🐈")
         let emojiPlan = try XCTUnwrap(SuggestionContinuationPlan.correcting(
-            .init(deletingUTF16Count: 2, replacementText: "cat"), in: emojiSource
+            .init(deletingText: "🐈", replacementText: "cat"), in: emojiSource
         ))
         XCTAssertEqual(emojiPlan.targetSnapshot.precedingText, "A cat")
         XCTAssertEqual(emojiPlan.targetSnapshot.selection.location, 5)
@@ -117,29 +117,37 @@ final class SuggestionContinuationPlanTests: XCTestCase {
 
     func testInvalidReplacementAndUnsafeContextsFailClosed() {
         let source = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "A 🐈")
-        for length in [-1, 0, 1, 5] {
-            XCTAssertNil(SuggestionContinuationPlan.correcting(.init(deletingUTF16Count: length, replacementText: "cat"), in: source))
+        for deleted in ["", "x", "whole suffix is too long"] {
+            XCTAssertNil(SuggestionContinuationPlan.correcting(.init(deletingText: deleted, replacementText: "cat"), in: source))
         }
         let combining = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Cafe\u{301}")
-        XCTAssertNil(SuggestionContinuationPlan.correcting(.init(deletingUTF16Count: 1, replacementText: "e"), in: combining))
+        XCTAssertNil(SuggestionContinuationPlan.correcting(.init(deletingText: "\u{301}", replacementText: "e"), in: combining))
         XCTAssertNil(SuggestionContinuationPlan.completing(" ", in: source))
         XCTAssertNil(SuggestionContinuationPlan.completing("tail", in: CotabbyTestFixtures.focusedInputSnapshot(isSecure: true)))
-        XCTAssertNil(SuggestionContinuationPlan.completing("tail", in: CotabbyTestFixtures.focusedInputSnapshot(selection: NSRange(location: 0, length: 2))))
+        XCTAssertNil(SuggestionContinuationPlan.completing(
+            "tail", in: CotabbyTestFixtures.focusedInputSnapshot(selection: NSRange(location: 0, length: 2))
+        ))
     }
 
     func testMatchingRequiresTheSameFieldProcessFocusSequenceAndContent() throws {
         let source = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please schedu", trailingText: " today")
         let plan = try XCTUnwrap(SuggestionContinuationPlan.completing("le", in: source))
         XCTAssertTrue(plan.matchesSource(source))
-        XCTAssertTrue(plan.matchesTarget(CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please schedule", trailingText: " today")))
+        XCTAssertTrue(plan.matchesTarget(CotabbyTestFixtures.focusedInputSnapshot(
+            precedingText: "Please schedule", trailingText: " today"
+        )))
         XCTAssertFalse(plan.matchesTarget(source))
         for changed in [
             CotabbyTestFixtures.focusedInputSnapshot(processIdentifier: 456, precedingText: "Please schedule", trailingText: " today"),
-            CotabbyTestFixtures.focusedInputSnapshot(elementIdentifier: "other-field", precedingText: "Please schedule", trailingText: " today"),
+            CotabbyTestFixtures.focusedInputSnapshot(
+                elementIdentifier: "other-field", precedingText: "Please schedule", trailingText: " today"
+            ),
             CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please schedule", trailingText: " today", focusChangeSequence: 2),
             CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please schedule", trailingText: " tomorrow"),
             CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please schedule ", trailingText: " today"),
-            CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please schedule", trailingText: " today", selection: NSRange(location: 14, length: 1))
+            CotabbyTestFixtures.focusedInputSnapshot(
+                precedingText: "Please schedule", trailingText: " today", selection: NSRange(location: 14, length: 1)
+            )
         ] {
             XCTAssertFalse(plan.matchesTarget(changed))
         }
@@ -170,12 +178,16 @@ final class SuggestionContinuationPlanTests: XCTestCase {
         for changed in [
             CotabbyTestFixtures.focusedInputSnapshot(elementIdentifier: "other", inputFrameRect: nil,
                 precedingText: "Please schedule", isWebContentField: true),
-            CotabbyTestFixtures.focusedInputSnapshot(elementIdentifier: "other", inputFrameRect: CGRect(x: 0, y: 80, width: 240, height: 32),
+            CotabbyTestFixtures.focusedInputSnapshot(
+                elementIdentifier: "other", inputFrameRect: CGRect(x: 0, y: 80, width: 240, height: 32),
                 precedingText: "Please schedule", isWebContentField: true),
             CotabbyTestFixtures.focusedInputSnapshot(elementIdentifier: "other", role: "AXTextArea",
                 precedingText: "Please schedule", isWebContentField: true),
-            CotabbyTestFixtures.focusedInputSnapshot(elementIdentifier: "other", precedingText: "Please schedule", isWebContentField: false),
-            CotabbyTestFixtures.focusedInputSnapshot(elementIdentifier: "other", precedingText: "Please schedule", isWebContentField: true,
+            CotabbyTestFixtures.focusedInputSnapshot(
+                elementIdentifier: "other", precedingText: "Please schedule", isWebContentField: false
+            ),
+            CotabbyTestFixtures.focusedInputSnapshot(
+                elementIdentifier: "other", precedingText: "Please schedule", isWebContentField: true,
                 focusChangeSequence: 2)
         ] {
             XCTAssertFalse(plan.matchesTarget(changed))

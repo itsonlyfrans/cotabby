@@ -232,6 +232,23 @@ final class SuggestionCoordinatorAcceptanceTests: SuggestionCoordinatorRigTestCa
         )
     }
 
+    func test_correctionPassesExactLiveUnicodeSuffixToTheInserter() {
+        let liveWord = "cafe\u{0301}"
+        let rig = retained(makeCoordinatorRig(
+            snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Keep " + liveWord + " ")
+        ))
+        let context = rig.interactionState.materializeContext(from: rig.focusProvider.snapshot.context!)
+        _ = rig.interactionState.startSession(
+            fullText: "coffee", liveContext: context, latency: 0, kind: .correction(typoWord: "café")
+        )
+        rig.overlayController.showSuggestion("coffee", geometry: CotabbyTestFixtures.overlayGeometry())
+
+        XCTAssertTrue(rig.coordinator.acceptCurrentSuggestion())
+        XCTAssertEqual(rig.inserter.replacedTexts.count, 1)
+        XCTAssertEqual(rig.inserter.replacedTexts.first.map { Array($0.utf16) }, Array((liveWord + " ").utf16))
+        XCTAssertEqual(rig.inserter.replacements.first?.text, "coffee ")
+    }
+
     func test_failedCorrectionReplacementReturnsTheKeyAndClearsTheOffer() {
         let rig = retained(makeCoordinatorRig(
             snapshot: CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Please recieve ")

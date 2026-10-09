@@ -108,9 +108,14 @@ struct MirrorOverlayLayout: Equatable {
 
         let anchorTopY = computeAnchorTopY(geometry: geometry, reason: reason)
         var originX = computeAnchorOriginX(geometry: geometry, cardWidth: cardWidth)
-        // Card sits BELOW the field/caret. AppKit screen coordinates are bottom-up, so subtracting
-        // the card height from the anchor's bottom edge places the card just under the anchor line.
-        var originY = anchorTopY - cardHeight
+        // Prefer below the line, then above when the screen edge leaves too little room below.
+        // Clamping the below placement upward alone would put the card over the user's caret.
+        let originY = computeOriginY(
+            geometry: geometry,
+            belowAnchorY: anchorTopY,
+            cardHeight: cardHeight,
+            visibleFrame: visibleFrame
+        )
 
         // Clamp to the visible frame so the card never disappears off-screen for hosts near edges.
         let minX = visibleFrame.minX + Metrics.screenMargin
@@ -119,14 +124,6 @@ struct MirrorOverlayLayout: Equatable {
             originX = min(max(originX, minX), maxX)
         } else {
             originX = minX
-        }
-
-        let minY = visibleFrame.minY + Metrics.screenMargin
-        let maxY = visibleFrame.maxY - Metrics.screenMargin - cardHeight
-        if maxY >= minY {
-            originY = min(max(originY, minY), maxY)
-        } else {
-            originY = minY
         }
 
         let panelFrame = CGRect(
@@ -144,6 +141,48 @@ struct MirrorOverlayLayout: Equatable {
             isRightToLeft: geometry.isRightToLeft,
             reason: reason
         )
+    }
+
+    /// Keeps the popup outside the anchor line whenever either side can contain it. The caller
+    /// supplies the owning screen's visible frame, so this also works on displays below the main
+    /// display, whose AppKit Y coordinates are negative. If neither side fits, use the side with
+    /// more available space before clamping; unavoidable overlap is confined to cramped screens.
+    private static func computeOriginY(
+        geometry: SuggestionOverlayGeometry,
+        belowAnchorY: CGFloat,
+        cardHeight: CGFloat,
+        visibleFrame: CGRect
+    ) -> CGFloat {
+        let minY = visibleFrame.minY + Metrics.screenMargin
+        let maxY = visibleFrame.maxY - Metrics.screenMargin - cardHeight
+        guard maxY >= minY else {
+            // A screen shorter than the card cannot satisfy both margins. Preserve the existing
+            // stable bottom-margin fallback rather than hiding part of the suggestion arbitrarily.
+            return minY
+        }
+
+        let belowOriginY = belowAnchorY - cardHeight
+        if belowOriginY >= minY {
+            return min(belowOriginY, maxY)
+        }
+
+        let aboveOriginY: CGFloat
+        if hasCaretLine(geometry.caretRect) {
+            aboveOriginY = geometry.caretRect.maxY + Metrics.anchorGap
+        } else if let inputFrame = geometry.inputFrameRect?.standardized, !inputFrame.isEmpty {
+            aboveOriginY = inputFrame.maxY + Metrics.anchorGap
+        } else {
+            // No usable line or field: keep the existing screen-margin fallback.
+            return minY
+        }
+        if aboveOriginY >= minY, aboveOriginY <= maxY {
+            return aboveOriginY
+        }
+
+        let roomBelow = belowAnchorY - minY
+        let roomAbove = visibleFrame.maxY - Metrics.screenMargin - aboveOriginY
+        let preferredOriginY = roomAbove > roomBelow ? aboveOriginY : belowOriginY
+        return min(max(preferredOriginY, minY), maxY)
     }
 
     /// The Y coordinate the card sits *under*. In AppKit's bottom-up coordinate system this is the

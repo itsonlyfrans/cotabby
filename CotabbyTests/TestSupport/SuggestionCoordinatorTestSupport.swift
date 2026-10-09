@@ -152,6 +152,7 @@ final class RigInserter: SuggestionInserting {
     var lastErrorMessage: String?
     var insertedChunks: [String] = []
     var replacements: [(deleteCount: Int, text: String)] = []
+    var replacedTexts: [String] = []
     var shouldInsert = true
 
     func insert(_ suggestion: String) -> Bool {
@@ -159,8 +160,9 @@ final class RigInserter: SuggestionInserting {
         return shouldInsert
     }
 
-    func replace(deletingUTF16Count: Int, with text: String) -> Bool {
-        replacements.append((deletingUTF16Count, text))
+    func replace(deletingText: String, with text: String) -> Bool {
+        replacedTexts.append(deletingText)
+        replacements.append((deletingText.utf16.count, text))
         return shouldInsert
     }
 }
@@ -183,7 +185,10 @@ final class RigSuggestionEngine: SuggestionGenerating {
         return try await resultProvider(request)
     }
 
-    func generateSuggestion(for request: SuggestionRequest, onPartial: (@MainActor (SuggestionResult) -> Void)?) async throws -> SuggestionResult {
+    func generateSuggestion(
+        for request: SuggestionRequest,
+        onPartial: (@MainActor (SuggestionResult) -> Void)?
+    ) async throws -> SuggestionResult {
         for text in partialTexts {
             onPartial?(SuggestionResult(generation: request.generation, rawText: text, text: text, latency: 0.01))
             await Task.yield()

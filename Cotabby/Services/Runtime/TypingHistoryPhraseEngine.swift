@@ -36,7 +36,15 @@ final class TypingHistoryPhraseEngine: SuggestionGenerating {
         onPartial: (@MainActor (SuggestionResult) -> Void)?
     ) async throws -> SuggestionResult {
         let started = ProcessInfo.processInfo.systemUptime
-        if let phrase = history.phraseContinuation(for: request, engine: engineKind()) {
+        // History bypasses model normalization because these are the user's own words. It still
+        // crosses the same display/insertion boundary: reject unsafe text and anything already
+        // after the caret, including a signature beginning on the next line. Do not strip echoes
+        // or model scaffolding here; that would rewrite a valid stored phrase.
+        if let phrase = history.phraseContinuation(for: request, engine: engineKind()),
+           InsertionSafetyGate.isSafeToInsert(phrase),
+           !TrailingDuplicationFilter.duplicatesTrailingText(
+               phrase, trailingText: request.context.trailingText
+           ) {
             CotabbyLogger.suggestion.debug(
                 "Answered from typing history",
                 metadata: ["request_id": .string(request.requestID), "engine": .string("history")]

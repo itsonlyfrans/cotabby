@@ -6,6 +6,8 @@ import SwiftUI
 /// style rules.
 struct WritingPaneView: View {
     @ObservedObject var suggestionSettings: SuggestionSettingsModel
+    @State private var vocabularyDraft = ""
+    @State private var vocabularyFeedback: String?
 
     var body: some View {
         SettingsPaneScaffold {
@@ -121,6 +123,74 @@ struct WritingPaneView: View {
                     .settingsItem(.spellingDictionaries)
             }
 
+            Section("Personal Vocabulary") {
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsRowLabel(
+                        title: "Words You Use",
+                        description: "Save names and specialist words so Cotabby keeps their spelling and can " +
+                            "complete them. These words stay on your Mac and are not sent as prompt context.",
+                        systemImage: "character.book.closed.fill"
+                    )
+                    HStack {
+                        TextField("Add a name or word", text: $vocabularyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("New personal vocabulary word")
+                            .onSubmit(addVocabularyWord)
+                        Button("Add", action: addVocabularyWord)
+                            .disabled(vocabularyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                      suggestionSettings.personalVocabularyWords.count >= PersonalVocabulary.maximumEntries)
+                    }
+                    Text("One word at a time, up to \(PersonalVocabulary.maximumWordCharacters) characters. " +
+                         "Apostrophes and hyphens are supported.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let vocabularyFeedback {
+                        Text(vocabularyFeedback)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(vocabularyFeedback)
+                    }
+                    if !suggestionSettings.personalVocabularyWords.isEmpty {
+                        ScrollView {
+                            LazyVStack(spacing: 6) {
+                                ForEach(suggestionSettings.personalVocabularyWords, id: \.self) { word in
+                                    HStack {
+                                        Text(word).textSelection(.enabled)
+                                        Spacer()
+                                        Button {
+                                            suggestionSettings.removePersonalVocabularyWord(word)
+                                            vocabularyFeedback = nil
+                                        } label: {
+                                            Image(systemName: "minus.circle")
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("Remove \(word) from personal vocabulary")
+                                        .help("Remove \(word)")
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .frame(maxHeight: 180)
+                        .accessibilityLabel("Saved personal vocabulary words")
+                    }
+                    HStack {
+                        Text("\(suggestionSettings.personalVocabularyWords.count) of \(PersonalVocabulary.maximumEntries) words")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Clear All", role: .destructive) {
+                            suggestionSettings.clearPersonalVocabulary()
+                            vocabularyFeedback = nil
+                        }
+                        .disabled(suggestionSettings.personalVocabularyWords.isEmpty)
+                        .accessibilityLabel("Clear all personal vocabulary words")
+                    }
+                }
+                .padding(.vertical, 6)
+                .settingsItem(.personalVocabulary)
+            }
+
             Section("Profile") {
                 VStack(alignment: .leading, spacing: 16) {
                     // Introduces the personalization inputs passed to the AI. The custom-rules input
@@ -165,6 +235,22 @@ struct WritingPaneView: View {
                         .settingsItem(.customRules)
                 }
             }
+        }
+    }
+
+    /// The view owns only the unfinished entry; the shared settings model validates and persists it.
+    /// Keeping draft text here prevents every keystroke from becoming a durable vocabulary change.
+    private func addVocabularyWord() {
+        if suggestionSettings.addPersonalVocabularyWord(vocabularyDraft) {
+            vocabularyDraft = ""
+            vocabularyFeedback = nil
+        } else if suggestionSettings.personalVocabularyWords.count >= PersonalVocabulary.maximumEntries {
+            vocabularyFeedback = "Your vocabulary is full. Remove a word to add another."
+        } else if let word = PersonalVocabulary.normalizedWord(vocabularyDraft),
+                  PersonalVocabulary.contains(word, in: suggestionSettings.personalVocabularyWords) {
+            vocabularyFeedback = "That word is already saved."
+        } else {
+            vocabularyFeedback = "Enter one word using letters, with optional apostrophes or hyphens."
         }
     }
 

@@ -14,7 +14,8 @@ final class MirrorOverlayLayoutTests: XCTestCase {
     private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 
     private static let allReasons: [CompletionRenderMode.MirrorReason] = [
-        .caretGeometryEstimated, .caretLayoutEstimated, .userPreference, .perAppOverride, .caretMidLine
+        .caretGeometryEstimated, .caretLayoutEstimated, .userPreference, .perAppOverride, .caretMidLine,
+        .inlineLayoutUnavailable
     ]
 
     private func makeLayout(
@@ -81,7 +82,6 @@ final class MirrorOverlayLayoutTests: XCTestCase {
         }
     }
 
-
     // MARK: - Horizontal anchor
 
     func test_make_alignsLeftCardEdgeToLTRCaret() {
@@ -115,13 +115,75 @@ final class MirrorOverlayLayoutTests: XCTestCase {
         let left = makeLayout("left edge test", caret: CGRect(x: 2, y: 500, width: 2, height: 18))
         XCTAssertEqual(left.panelFrame.minX, 12)
 
-        // Bottom: 11 - 29 = -18 is pushed up to the margin.
-        let bottom = makeLayout("near bottom edge", caret: CGRect(x: 500, y: 12, width: 2, height: 18))
-        XCTAssertEqual(bottom.panelFrame.minY, 12)
+        // Bottom: below would overlap the caret when clamped, so move above its top plus the gap.
+        let bottomCaret = CGRect(x: 500, y: 12, width: 2, height: 18)
+        let bottom = makeLayout("near bottom edge", caret: bottomCaret)
+        XCTAssertEqual(bottom.panelFrame.minY, 31)
+        XCTAssertFalse(bottom.panelFrame.intersects(bottomCaret))
 
         // Top: 949 - 29 = 920 is pulled down to 900 - 12 - 29 = 859.
         let top = makeLayout("near top edge", caret: CGRect(x: 500, y: 950, width: 2, height: 18))
         XCTAssertEqual(top.panelFrame.minY, 859)
+    }
+
+    func test_make_prefersBelowWhenItFitsAndAboveWhenItDoesNotForEveryReason() {
+        for reason in Self.allReasons {
+            // At y 42 the 29pt card and 1pt gap fit exactly against the 12pt margin.
+            let fitsBelow = CGRect(x: 500, y: 42, width: 2, height: 18)
+            let below = makeLayout(caret: fitsBelow, reason: reason)
+            XCTAssertEqual(below.panelFrame.minY, 12, "\(reason)")
+            XCTAssertEqual(below.panelFrame.maxY, fitsBelow.minY - 1, "\(reason)")
+            XCTAssertFalse(below.panelFrame.intersects(fitsBelow), "\(reason)")
+
+            // One point less room should flip the card rather than clamp it over the line.
+            let needsAbove = CGRect(x: 500, y: 41, width: 2, height: 18)
+            let above = makeLayout(caret: needsAbove, reason: reason)
+            XCTAssertEqual(above.panelFrame.minY, needsAbove.maxY + 1, "\(reason)")
+            XCTAssertFalse(above.panelFrame.intersects(needsAbove), "\(reason)")
+            XCTAssertTrue(screen.insetBy(dx: 12, dy: 12).contains(above.panelFrame), "\(reason)")
+        }
+    }
+
+    func test_make_aboveFallbackKeepsFractionalAndZeroWidthCaretLinesClear() {
+        let caret = CGRect(x: 500, y: 12.5, width: 0, height: 18.25)
+        let layout = makeLayout(caret: caret)
+
+        // Integral panel rounding may consume part of the 1pt gap, but never the caret line.
+        XCTAssertGreaterThanOrEqual(layout.panelFrame.minY, caret.maxY)
+        XCTAssertTrue(screen.insetBy(dx: 12, dy: 12).contains(layout.panelFrame))
+    }
+
+    func test_make_emptyCaretNearBottomPlacesCardAboveItsInputFrame() {
+        let field = CGRect(x: 400, y: 12, width: 300, height: 40)
+        let layout = makeLayout(caret: .zero, inputFrame: field)
+
+        XCTAssertEqual(layout.panelFrame.minY, field.maxY + 1)
+        XCTAssertFalse(layout.panelFrame.intersects(field))
+        XCTAssertEqual(layout.panelFrame.midX, field.midX)
+    }
+
+    func test_make_usesOwningScreensVerticalBoundsForAboveFallback() {
+        // A display below and left of the main screen has negative coordinates on both axes.
+        let secondary = CGRect(x: -1440, y: -900, width: 1440, height: 900)
+        let caret = CGRect(x: -800, y: -888, width: 2, height: 18)
+        let layout = makeLayout(caret: caret, visibleFrame: secondary)
+
+        XCTAssertEqual(layout.panelFrame.minY, -869)
+        XCTAssertEqual(layout.panelFrame.minX, -810)
+        XCTAssertFalse(layout.panelFrame.intersects(caret))
+        XCTAssertTrue(secondary.insetBy(dx: 12, dy: 12).contains(layout.panelFrame))
+    }
+
+    func test_make_whenNeitherSideFitsUsesTheSideWithMoreSpaceWithinScreenMargins() {
+        let crampedScreen = CGRect(x: 0, y: 0, width: 1440, height: 70)
+        let caret = CGRect(x: 500, y: 25, width: 2, height: 18)
+        let layout = makeLayout(caret: caret, visibleFrame: crampedScreen)
+
+        // Only 14pt remain above and 12pt below for a 29pt card. Overlap is unavoidable, but
+        // choosing above preserves the larger clear region and still keeps the entire card visible.
+        XCTAssertEqual(layout.panelFrame.minY, 29)
+        XCTAssertEqual(layout.panelFrame.maxY, 58)
+        XCTAssertTrue(crampedScreen.insetBy(dx: 12, dy: 12).contains(layout.panelFrame))
     }
 
     func test_make_clampsWithinAVisibleFrameWithNegativeOrigin() {

@@ -149,6 +149,7 @@ struct SuggestionSettingsStore {
     private static let suppressCompletionsOnTypoDefaultsKey = "cotabbySuppressCompletionsOnTypo"
     private static let offerTypoCorrectionsDefaultsKey = "cotabbyOfferTypoCorrections"
     private static let spellingDictionaryCodesDefaultsKey = "cotabbyEnabledSpellingDictionaryCodes"
+    private static let personalVocabularyWordsDefaultsKey = "cotabbyPersonalVocabularyWords"
     private static let automaticallyFixTyposDefaultsKey = "cotabbyAutomaticallyFixTypos"
     private static let performanceTrackingEnabledDefaultsKey = "cotabbyPerformanceTrackingEnabled"
     private static let lowPowerModeAutoDisableDefaultsKey = "cotabbyLowPowerModeAutoDisableEnabled"
@@ -238,6 +239,7 @@ struct SuggestionSettingsStore {
         offerTypoCorrectionsDefaultsKey,
         spellingDictionaryCodesDefaultsKey,
         automaticallyFixTyposDefaultsKey,
+        personalVocabularyWordsDefaultsKey,
         performanceTrackingEnabledDefaultsKey,
         lowPowerModeAutoDisableDefaultsKey,
         menuBarWordCountVisibleDefaultsKey,
@@ -628,7 +630,10 @@ struct SuggestionSettingsStore {
                 suppressCompletionsOnTypo: resolvedSuppressCompletionsOnTypo,
                 offerTypoCorrections: resolvedOfferTypoCorrections,
                 enabledSpellingDictionaryCodes: resolvedEnabledSpellingDictionaryCodes,
-                automaticallyFixTypos: resolvedAutomaticallyFixTypos
+                automaticallyFixTypos: resolvedAutomaticallyFixTypos,
+                personalVocabularyWords: PersonalVocabulary.normalize(
+                    userDefaults.stringArray(forKey: Self.personalVocabularyWordsDefaultsKey) ?? []
+                )
             ),
             presentation: SuggestionPresentationSettings(
                 showIndicator: resolvedShowIndicator,
@@ -700,6 +705,7 @@ struct SuggestionSettingsStore {
         saveOfferTypoCorrections(data.offerTypoCorrections)
         saveEnabledSpellingDictionaryCodes(data.enabledSpellingDictionaryCodes)
         saveAutomaticallyFixTypos(data.automaticallyFixTypos)
+        savePersonalVocabularyWords(data.personalVocabularyWords)
         savePerformanceTrackingEnabled(data.isPerformanceTrackingEnabled)
         saveLowPowerModeAutoDisableEnabled(data.isLowPowerModeAutoDisableEnabled)
         saveMenuBarIconVisible(data.isMenuBarIconVisible)
@@ -951,6 +957,15 @@ struct SuggestionSettingsStore {
             SpellingDictionaryCatalog.normalize(codes),
             forKey: Self.spellingDictionaryCodesDefaultsKey
         )
+    }
+
+    func savePersonalVocabularyWords(_ words: [String]) {
+        let normalized = PersonalVocabulary.normalize(words)
+        if normalized.isEmpty {
+            userDefaults.removeObject(forKey: Self.personalVocabularyWordsDefaultsKey)
+        } else {
+            userDefaults.set(normalized, forKey: Self.personalVocabularyWordsDefaultsKey)
+        }
     }
 
     func saveAutomaticallyFixTypos(_ enabled: Bool) {
